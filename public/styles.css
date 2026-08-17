@@ -189,6 +189,10 @@ main { margin-left: var(--sidebar); min-height: 100vh; }
 .lead-provider { color: var(--blue); font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .lead-item h3 { min-height: 34px; margin: 7px 0 12px; overflow: hidden; font-size: 12px; line-height: 1.4; }
 .lead-item button { width: 100%; font-size: 10px; }
+.generic-alert-queue { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px; border: 1px solid #d7dfd9; border-left: 4px solid #d5a645; border-radius: 7px; background: #fbfcfb; }
+.generic-alert-queue h3 { margin: 5px 0; font-size: 14px; }
+.generic-alert-queue p { margin: 0; color: var(--muted); font-size: 12px; }
+.generic-alert-queue button { flex: 0 0 auto; }
 
 .job-list { display: grid; gap: 10px; }
 .job-card {

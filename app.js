@@ -212,6 +212,9 @@ function render() {
 function renderToday() {
   const available = state.jobs.filter(job => job.status === "new");
   const portalAlerts = state.leads.length;
+  const genericLead = lead => /^(linkedin|naukri|indeed) job posting$/i.test(String(lead.subject || "").trim()) || /^https?:\/\//i.test(String(lead.subject || ""));
+  const titledLeads = state.leads.filter(lead => !genericLead(lead));
+  const genericLeads = state.leads.filter(genericLead);
   const reviewTotal = available.length + portalAlerts;
   const activeApps = state.applications.filter(item => item.stage !== "closed").length;
   const interviews = state.applications.filter(item => ["interview", "offer"].includes(item.rawStage || item.stage)).length;
@@ -233,7 +236,7 @@ function renderToday() {
       ${metric("Active applications", activeApps, activeApps ? "Tracked in pipeline" : "None started")}
       ${metric("Follow-ups ready", followupsReady, followupsReady ? "Approve and send" : "None waiting")}
     </section>
-    ${state.leads.length ? `<section class="portal-leads"><div class="section-heading"><div><h2>Trusted portal alerts</h2><p>Title-filtered alerts from restricted portals. Full scoring happens only when a supported ATS provides the JD.</p></div><span class="badge new">${state.leads.length} NEW</span></div><div class="lead-strip">${state.leads.slice(0, 8).map(lead => `<article class="lead-item"><span class="lead-provider">${escapeHtml(lead.provider)}</span><h3>${escapeHtml(lead.subject || "Job posting")}</h3><button class="secondary-button" data-action="open-lead" data-id="${escapeHtml(lead.id)}" data-url="${escapeHtml(lead.url)}">Review on ${escapeHtml(lead.provider)}</button></article>`).join("")}</div></section>` : ""}
+    ${state.leads.length ? `<section class="portal-leads"><div class="section-heading"><div><h2>Portal alerts</h2><p>Official links from restricted portals. Full scoring starts only after a complete JD is available.</p></div><span class="badge new">${state.leads.length} NEW</span></div>${genericLeads.length ? `<article class="generic-alert-queue"><div><span class="lead-provider">${escapeHtml(genericLeads[0].provider)}</span><h3>${genericLeads.length} alert${genericLeads.length === 1 ? "" : "s"} need job details</h3><p>These emails contained an official link but no reliable title. Review them one at a time to import a full JD.</p></div><button class="secondary-button" data-action="open-lead" data-id="${escapeHtml(genericLeads[0].id)}" data-url="${escapeHtml(genericLeads[0].url)}">Review next alert</button></article>` : ""}${titledLeads.length ? `<div class="lead-strip">${titledLeads.slice(0, 4).map(lead => `<article class="lead-item"><span class="lead-provider">${escapeHtml(lead.provider)}</span><h3>${escapeHtml(lead.subject)}</h3><button class="secondary-button" data-action="open-lead" data-id="${escapeHtml(lead.id)}" data-url="${escapeHtml(lead.url)}">Open official posting</button></article>`).join("")}</div>` : ""}</section>` : ""}
     <div class="content-grid">
       <section>
         <div class="section-heading"><div><h2>Recommended for you</h2><p>${remoteEnabled ? "Live records from your configured sources" : "Demo records until the cloud backend is connected"}</p></div><button class="text-button" data-action="${remoteEnabled ? "scan" : "reset"}">${remoteEnabled ? "Refresh sources" : "Reset demo"}</button></div>
