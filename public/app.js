@@ -90,7 +90,7 @@ function mapRemote(data) {
     reasons: parseJson(job.score_reasons, []), applyUrl: job.apply_url, description: job.description
   }));
   const stageMap = { approved: "prepared", prepared: "prepared", applied: "applied", outreach: "outreach", interview: "interview", offer: "interview", rejected: "closed", withdrawn: "closed" };
-  state.applications = data.applications.map(item => ({ id: item.id, title: item.title, company: item.company, stage: stageMap[item.stage] || "prepared", updated: item.updated_at, score: item.score, applyUrl: item.apply_url, rawStage: item.stage,
+  state.applications = data.applications.map(item => ({ id: item.id, title: item.title, company: item.company, stage: stageMap[item.stage] || "prepared", updated: item.updated_at, submittedAt: item.submitted_at, score: item.score, applyUrl: item.apply_url, rawStage: item.stage,
     tailoredResumeId: item.tailored_resume_id, tailoredResume: parseJson(item.tailored_resume_json, null), resumeAudit: parseJson(item.resume_audit_json, null), keywordCoverage: parseJson(item.keyword_coverage, null), tailoredScore: item.tailored_match_score, latex: item.latex_content, tailoredStatus: item.tailored_status, coverLetter: item.cover_letter }));
   state.outreach = data.outreach.map(item => ({
     id: item.id, applicationId: item.application_id, name: item.recruiter_name || "Recruiter not assigned", email: item.recruiter_email || "",
@@ -267,7 +267,7 @@ function renderPipeline() {
     <section class="pipeline"><div class="pipeline-grid">${stages.map(stage => {
       const items = state.applications.filter(item => item.stage === stage.id);
       return `<div class="pipeline-column"><div class="pipeline-header"><span>${stage.label}</span><span>${items.length}</span></div>${items.map(item => `
-        <article class="pipeline-card"><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.company)}</p>${item.tailoredResumeId ? `<button class="text-button" data-action="review-pack" data-id="${escapeHtml(item.id)}">Review application pack</button>` : ""}<footer><span>${item.updated}</span><span>${item.tailoredScore || item.score}% match</span></footer></article>`).join("")}</div>`;
+        <article class="pipeline-card"><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.company)}</p><div class="application-meta"><span>${item.tailoredResumeId ? "Tailored ATS pack saved" : "Application documents pending"}</span>${item.submittedAt ? `<span>Applied ${escapeHtml(item.submittedAt)}</span>` : `<span>Updated ${escapeHtml(item.updated)}</span>`}</div>${item.tailoredResumeId ? `<button class="text-button" data-action="review-pack" data-id="${escapeHtml(item.id)}">Review resume, audit & history</button>` : ""}<footer><span>${item.updated}</span><span>${item.tailoredScore || item.score}% match</span></footer></article>`).join("")}</div>`;
     }).join("")}</div></section>`;
 }
 
@@ -283,7 +283,8 @@ function renderSettings() {
   const s = state.settings;
   app.innerHTML = `<div class="settings-grid">
     <section class="panel settings-section"><h2>Search profile</h2>
-      <div class="field"><label for="role">Target designation</label><input id="role" value="${s.role}"></div>
+      <div class="field"><label for="role">Primary target designation</label><input id="role" value="${escapeHtml(s.role)}"><small>Your highest-priority role for matching.</small></div>
+      <div class="field"><label for="alternate-titles">Additional target designations</label><textarea id="alternate-titles" rows="4" placeholder="Business Intelligence Analyst, Analytics Engineer, Junior Data Engineer">${escapeHtml(s.alternateTitles || "")}</textarea><small>Enter multiple roles separated by commas. Every role is included in job matching.</small></div>
       <div class="field"><label for="location">Preferred location</label><input id="location" value="${s.location}"></div>
       <div class="field"><label for="skills">Required skills</label><input id="skills" value="${s.requiredSkills || "JavaScript,TypeScript,React,Node.js"}"></div>
       <div class="field"><label for="minimum-salary">Minimum CTC (LPA)</label><input id="minimum-salary" type="number" min="1" step="0.5" value="${(s.minimumSalary || 700000) / 100000}"><small>Target: ₹8-10 LPA · Stretch: ₹10-12 LPA</small></div>
@@ -542,6 +543,7 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
   if (state.activeView === "today") return runScan();
   if (state.activeView === "settings") {
     state.settings.role = document.querySelector("#role").value.trim() || seedState.settings.role;
+    state.settings.alternateTitles = document.querySelector("#alternate-titles").value.trim();
     state.settings.location = document.querySelector("#location").value.trim() || seedState.settings.location;
     state.settings.dailyLimit = Number(document.querySelector("#limit").value) || 8;
     state.settings.minimumSalary = (Number(document.querySelector("#minimum-salary").value) || 7) * 100000;

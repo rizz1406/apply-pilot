@@ -240,6 +240,8 @@ main { margin-left: var(--sidebar); min-height: 100vh; }
 .pipeline-card { margin-bottom: 9px; padding: 13px; border: 1px solid #d8ded8; border-radius: 6px; background: white; }
 .pipeline-card h3 { margin: 0; font-size: 13px; }
 .pipeline-card p { margin: 5px 0 9px; color: var(--muted); font-size: 11px; }
+.application-meta { display: grid; gap: 3px; margin: 0 0 9px; color: #52635b; font-size: 10px; }
+.application-meta span:first-child { color: #087443; font-weight: 700; }
 .pipeline-card footer { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 10px; }
 
 .outreach-table { width: 100%; border-collapse: collapse; }
