@@ -4,6 +4,7 @@ import { sendNotificationEmail, sendOutreach, syncApplicationConfirmations, sync
 import { scoreJob } from "./matching.js";
 import { notify } from "./notifications.js";
 import { contentHash, createTailoredPack } from "./resume-tailor.js";
+import { evaluateApplicationGate } from "./quality-gate.js";
 
 const json = (data, status = 200, extra = {}) => new Response(JSON.stringify(data), {
   status,
@@ -198,13 +199,8 @@ async function route(request, env) {
     let application = null;
     if (body.decision === "approved") {
       const settings = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
-      const minimum = Number(settings.tailoring_minimum_score || 75);
-      const mustHave = String(settings.must_have_skills || "").split(",").map(value => value.trim().toLowerCase()).filter(Boolean);
-      const jobText = `${job.title || ""} ${job.description || ""}`.toLowerCase();
-      const missingMustHave = mustHave.filter(skill => !jobText.includes(skill));
-      if (!String(job.description || "").trim()) return json({ error: "A complete job description is required before creating an application pack" }, 409);
-      if (Number(job.score) < minimum) return json({ error: `This role scores ${job.score}%. Your tailoring gate is ${minimum}%.` }, 409);
-      if (missingMustHave.length) return json({ error: `Missing required skills: ${missingMustHave.join(", ")}` }, 409);
+      const gate = evaluateApplicationGate(job, settings);
+      if (!gate.allowed) return json({ error: gate.error }, 409);
       const master = await env.DB.prepare("SELECT * FROM master_resume_profiles WHERE id = 1").first();
       if (!master) return json({ error: "Verified master resume profile is missing" }, 409);
       const profile = JSON.parse(master.profile_json);
