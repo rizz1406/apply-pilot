@@ -98,9 +98,13 @@ export async function syncApplicationConfirmations(env) {
     const text = `${headers.subject || ""} ${messageText(message.payload)}`.toLowerCase();
     const confirmation = /application (?:was )?(?:received|submitted)|thank you for applying|thanks for applying/.test(text);
     if (!confirmation) continue;
-    const candidates = applications.filter(application => text.includes(application.company.toLowerCase()));
-    if (candidates.length !== 1) continue;
-    const application = candidates[0];
+    const companyCandidates = applications.filter(application => text.includes(application.company.toLowerCase()));
+    const candidates = companyCandidates.filter(application => {
+      const terms = application.title.toLowerCase().split(/[^a-z0-9]+/).filter(term => term.length >= 4);
+      return terms.some(term => text.includes(term));
+    });
+    const application = candidates.length === 1 ? candidates[0] : (companyCandidates.length === 1 ? companyCandidates[0] : null);
+    if (!application) continue;
     const result = await env.DB.prepare("UPDATE applications SET stage = 'applied', submitted_at = COALESCE(submitted_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND stage IN ('approved','prepared')").bind(application.id).run();
     if (!(result.meta.changes || 0)) continue;
     await env.DB.prepare("INSERT INTO activity_log (event_type, entity_type, entity_id, message) VALUES ('application_confirmed', 'application', ?, ?)")

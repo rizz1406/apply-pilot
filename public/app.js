@@ -2,6 +2,14 @@ const STORAGE_KEY = "applypilot-demo-state-v1";
 const API_TOKEN_KEY = "applypilot-api-token";
 const API_BASE = location.port === "4173" ? "http://127.0.0.1:8787/api" : "https://applypilot-api.rizwanmirza95551.workers.dev/api";
 let remoteEnabled = false;
+const SOURCE_PRESETS = [
+  { provider: "greenhouse", organization: "cloudflare", label: "Cloudflare" },
+  { provider: "greenhouse", organization: "datadog", label: "Datadog" },
+  { provider: "greenhouse", organization: "stripe", label: "Stripe" },
+  { provider: "greenhouse", organization: "databricks", label: "Databricks" },
+  { provider: "greenhouse", organization: "hubspot", label: "HubSpot" },
+  { provider: "smartrecruiters", organization: "Visa", label: "Visa" }
+];
 
 const seedState = {
   activeView: "today",
@@ -102,6 +110,7 @@ function mapRemote(data) {
   state.leads = data.leads || [];
   state.resumeVariants = data.resumeVariants || [];
   state.analytics = data.analytics || {};
+  state.contacts = data.contacts || [];
   if (data.profile?.full_name) {
     state.profile = { fullName: data.profile.full_name, email: data.profile.email, currentTitle: data.profile.current_title, homeLocation: data.profile.home_location, targetSalary: data.profile.target_salary, stretchSalary: data.profile.stretch_salary };
   }
@@ -122,6 +131,8 @@ function mapRemote(data) {
       ,freshnessHours: data.settings.freshness_hours || 72
       ,minimumMatchScore: data.settings.minimum_match_score || 65
       ,browserNotifications: Boolean(data.settings.browser_notifications)
+      ,tailoringMinimumScore: data.settings.tailoring_minimum_score || 75
+      ,mustHaveSkills: data.settings.must_have_skills || ""
     };
   }
 }
@@ -263,7 +274,8 @@ function renderPipeline() {
     { id: "interview", label: "Interviewing" }, { id: "closed", label: "Closed" }
   ];
   const analytics = state.analytics || {};
-  app.innerHTML = `<section class="summary-grid" aria-label="Search analytics">${metric("Discovered", analytics.discovered || 0, "All time")}${metric("Applied", analytics.applied || 0, "Confirmed")}${metric("Interviews", analytics.interviews || 0, "Interview or offer")}${metric("Offers", analytics.offers || 0, "Tracked")}</section><div class="section-heading"><div><h2>${state.applications.length} tracked applications</h2><p>Every application keeps its documents, messages and history together</p></div></div>
+  const analyticsRows = (title, rows) => rows?.length ? `<section class="panel analytics-panel"><h3>${title}</h3>${rows.map(row => `<div class="analytics-row"><span>${escapeHtml(row.label)}</span><strong>${row.applications} applied</strong><small>${row.interviews || 0} interviews</small></div>`).join("")}</section>` : "";
+  app.innerHTML = `<section class="summary-grid" aria-label="Search analytics">${metric("Discovered", analytics.discovered || 0, "All time")}${metric("Applied", analytics.applied || 0, "Confirmed")}${metric("Interviews", analytics.interviews || 0, "Interview or offer")}${metric("Offers", analytics.offers || 0, "Tracked")}</section><div class="analytics-grid">${analyticsRows("Results by target role", analytics.byRole)}${analyticsRows("Results by source", analytics.bySource)}</div><div class="section-heading"><div><h2>${state.applications.length} tracked applications</h2><p>Every application keeps its documents, messages and history together</p></div></div>
     <section class="pipeline"><div class="pipeline-grid">${stages.map(stage => {
       const items = state.applications.filter(item => item.stage === stage.id);
       return `<div class="pipeline-column"><div class="pipeline-header"><span>${stage.label}</span><span>${items.length}</span></div>${items.map(item => `
@@ -292,6 +304,8 @@ function renderSettings() {
       <div class="field"><label for="active-from">Activate search on</label><input id="active-from" type="date" value="${s.activeFrom || ""}"><small>Leave empty to scan now.</small></div>
       <div class="field"><label for="freshness">Maximum posting age (hours)</label><input id="freshness" type="number" min="1" max="720" value="${s.freshnessHours || 72}"></div>
       <div class="field"><label for="match-score">Minimum match score</label><input id="match-score" type="number" min="50" max="95" value="${s.minimumMatchScore || 65}"></div>
+      <div class="field"><label for="tailoring-score">Resume tailoring gate</label><input id="tailoring-score" type="number" min="65" max="95" value="${s.tailoringMinimumScore || 75}"><small>Only roles at or above this score can create a resume pack.</small></div>
+      <div class="field"><label for="must-have-skills">Required skills for tailoring</label><input id="must-have-skills" value="${escapeHtml(s.mustHaveSkills || "")}" placeholder="SQL, BigQuery"><small>Every listed skill must appear in the full JD.</small></div>
     </section>
     <section class="panel settings-section"><h2>Automation controls</h2>
       ${toggle("approval", "Approve every application", s.approval)}
@@ -301,6 +315,7 @@ function renderSettings() {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:20px"><button class="secondary-button" data-action="connect">Test backend</button><button class="secondary-button" data-action="export-data">Export data</button>${remoteEnabled ? "" : `<button class="secondary-button danger-button" data-action="reset">Reset demo</button>`}</div>
     </section>
     <section class="panel settings-section" style="grid-column:1/-1"><h2>Job sources</h2>
+      <div class="preset-row"><strong>Recommended public boards</strong><span>${SOURCE_PRESETS.map(source => `<button class="preset-button" data-action="add-preset" data-preset="${source.organization}">${source.label}</button>`).join("")}</span></div>
       <div class="settings-grid"><div class="field"><label for="source-provider">Provider</label><select id="source-provider"><option value="greenhouse">Greenhouse</option><option value="lever">Lever</option><option value="ashby">Ashby</option><option value="smartrecruiters">SmartRecruiters</option></select></div><div class="field"><label for="source-org">Board identifier</label><input id="source-org" placeholder="Example: companyname"></div></div>
       <div class="field"><label for="source-label">Company label</label><input id="source-label" placeholder="Company name shown in the app"></div>
       <button class="secondary-button" data-action="add-source">Add source</button>
@@ -336,6 +351,7 @@ async function handleAction(event) {
     await connectBackend(false);
   }
   if (action === "add-source") await addSource();
+  if (action === "add-preset") await addPreset(event.currentTarget.dataset.preset);
   if (action === "delete-source") await deleteSource(id);
   if (action === "open-lead") await openLead(id, event.currentTarget.dataset.url);
   if (action === "export-data") await exportData();
@@ -382,7 +398,8 @@ function showFollowupComposer(application) {
   const defaultBody = `Hello,\n\nI recently applied for the ${application.title} role at ${application.company}. I am following up to reiterate my interest and ask whether there is any additional information I can provide.\n\nThank you for your time,\n${state.profile.fullName}`;
   dialog.innerHTML = `<form class="dialog-content" id="followup-form"><div class="dialog-header"><div><span class="badge new">FOLLOW-UP</span><h2>${escapeHtml(application.title)}</h2><p class="job-company">${escapeHtml(application.company)}</p></div><button type="button" class="dialog-close" aria-label="Close">x</button></div>
     <div class="field"><label for="recruiter-name">Recruiter name</label><input id="recruiter-name" placeholder="Optional"></div>
-    <div class="field"><label for="recruiter-email">Recruiter email</label><input id="recruiter-email" type="email" required placeholder="name@company.com"></div>
+    <div class="field"><label for="recruiter-email">Recruiter email</label><input id="recruiter-email" type="email" required list="verified-contacts" placeholder="name@company.com"><datalist id="verified-contacts">${(state.contacts || []).map(contact => `<option value="${escapeHtml(contact.email)}">${escapeHtml(contact.name || "Verified contact")}</option>`).join("")}</datalist></div>
+    <label class="check-row"><input id="verified-contact" type="checkbox"> I verified this recruiter contact myself</label>
     <div class="field"><label for="followup-subject">Subject</label><input id="followup-subject" required value="${escapeHtml(defaultSubject)}"></div>
     <div class="field"><label for="followup-body">Message</label><textarea id="followup-body" required rows="8">${escapeHtml(defaultBody)}</textarea></div>
     <div class="dialog-actions"><button type="button" class="secondary-button dialog-close-secondary">Cancel</button><button class="primary-button" type="submit">Save follow-up draft</button></div></form>`;
@@ -391,7 +408,7 @@ function showFollowupComposer(application) {
   dialog.querySelector("#followup-form").onsubmit = async event => {
     event.preventDefault();
     try {
-      await api("/outreach", { method: "POST", body: JSON.stringify({ applicationId: application.id, recruiterName: dialog.querySelector("#recruiter-name").value, recruiterEmail: dialog.querySelector("#recruiter-email").value, subject: dialog.querySelector("#followup-subject").value, body: dialog.querySelector("#followup-body").value }) });
+      await api("/outreach", { method: "POST", body: JSON.stringify({ applicationId: application.id, recruiterName: dialog.querySelector("#recruiter-name").value, recruiterEmail: dialog.querySelector("#recruiter-email").value, subject: dialog.querySelector("#followup-subject").value, body: dialog.querySelector("#followup-body").value, verifiedContact: dialog.querySelector("#verified-contact").checked }) });
       dialog.close(); await connectBackend(); state.activeView = "outreach"; render(); toast("Follow-up draft saved. Approve and send when ready.");
     } catch (error) { toast(error.message); }
   };
@@ -496,6 +513,13 @@ async function addSource() {
   } catch (error) { toast(error.message); }
 }
 
+async function addPreset(organization) {
+  const source = SOURCE_PRESETS.find(item => item.organization === organization);
+  if (!source) return;
+  try { await api("/sources", { method: "POST", body: JSON.stringify(source) }); await connectBackend(); toast(`${source.label} is now monitored.`); }
+  catch (error) { toast(error.message); }
+}
+
 async function deleteSource(id) {
   if (!remoteEnabled) return;
   try {
@@ -551,6 +575,8 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
     state.settings.activeFrom = document.querySelector("#active-from").value;
     state.settings.freshnessHours = Number(document.querySelector("#freshness").value) || 72;
     state.settings.minimumMatchScore = Number(document.querySelector("#match-score").value) || 65;
+    state.settings.tailoringMinimumScore = Number(document.querySelector("#tailoring-score").value) || 75;
+    state.settings.mustHaveSkills = document.querySelector("#must-have-skills").value.trim();
     if (state.settings.browserNotifications && "Notification" in window && Notification.permission === "default") await Notification.requestPermission();
     if (remoteEnabled) {
       try {
@@ -569,6 +595,8 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
           ,freshness_hours: state.settings.freshnessHours
           ,minimum_match_score: state.settings.minimumMatchScore
           ,browser_notifications: state.settings.browserNotifications
+          ,tailoring_minimum_score: state.settings.tailoringMinimumScore
+          ,must_have_skills: state.settings.mustHaveSkills
         }) });
       } catch (error) { return toast(error.message); }
     }

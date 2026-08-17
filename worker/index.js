@@ -41,7 +41,7 @@ async function activity(env, type, message, entityType = null, entityId = null, 
 }
 
 async function bootstrap(env) {
-  const [settings, profile, jobs, applications, outreach, activities, standardSources, externalSources, leads, resumeVariants, analytics] = await Promise.all([
+  const [settings, profile, jobs, applications, outreach, activities, standardSources, externalSources, leads, resumeVariants, analytics, contacts, roleAnalytics, sourceAnalytics] = await Promise.all([
     env.DB.prepare("SELECT * FROM settings WHERE id = 1").first(),
     env.DB.prepare("SELECT * FROM candidate_profile WHERE id = 1").first(),
     env.DB.prepare("SELECT * FROM jobs WHERE status IN ('new','shortlisted') ORDER BY score DESC, discovered_at DESC LIMIT 100").all(),
@@ -61,13 +61,20 @@ async function bootstrap(env) {
       (SELECT COUNT(*) FROM applications WHERE stage = 'applied') AS applied,
       (SELECT COUNT(*) FROM applications WHERE stage IN ('interview','offer')) AS interviews,
       (SELECT COUNT(*) FROM applications WHERE stage = 'offer') AS offers,
-      (SELECT COUNT(*) FROM applications WHERE stage = 'rejected') AS rejected`).first()
+      (SELECT COUNT(*) FROM applications WHERE stage = 'rejected') AS rejected`).first(),
+    env.DB.prepare("SELECT name, email, source_url, verified FROM recruiter_contacts WHERE verified = 1 ORDER BY created_at DESC LIMIT 100").all(),
+    env.DB.prepare(`SELECT j.title AS label, COUNT(*) AS applications,
+      SUM(CASE WHEN a.stage IN ('interview','offer') THEN 1 ELSE 0 END) AS interviews
+      FROM applications a JOIN jobs j ON j.id = a.job_id GROUP BY j.title ORDER BY applications DESC, interviews DESC LIMIT 8`).all(),
+    env.DB.prepare(`SELECT j.provider AS label, COUNT(*) AS applications,
+      SUM(CASE WHEN a.stage IN ('interview','offer') THEN 1 ELSE 0 END) AS interviews
+      FROM applications a JOIN jobs j ON j.id = a.job_id GROUP BY j.provider ORDER BY applications DESC, interviews DESC LIMIT 8`).all()
   ]);
   const sources = [
     ...standardSources.results.map(source => ({ ...source, id: `core:${source.id}` })),
     ...externalSources.results.map(source => ({ ...source, id: `external:${source.id}` }))
   ].sort((a, b) => a.label.localeCompare(b.label));
-  return { settings, profile, jobs: jobs.results, applications: applications.results, outreach: outreach.results, activity: activities.results, sources, leads: leads.results, resumeVariants: resumeVariants.results, analytics, demoMode: env.DEMO_MODE === "true" };
+  return { settings, profile, jobs: jobs.results, applications: applications.results, outreach: outreach.results, activity: activities.results, sources, leads: leads.results, resumeVariants: resumeVariants.results, analytics: { ...analytics, byRole: roleAnalytics.results, bySource: sourceAnalytics.results }, contacts: contacts.results, demoMode: env.DEMO_MODE === "true" };
 }
 
 async function route(request, env) {
@@ -191,6 +198,13 @@ async function route(request, env) {
     let application = null;
     if (body.decision === "approved") {
       const settings = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
+      const minimum = Number(settings.tailoring_minimum_score || 75);
+      const mustHave = String(settings.must_have_skills || "").split(",").map(value => value.trim().toLowerCase()).filter(Boolean);
+      const jobText = `${job.title || ""} ${job.description || ""}`.toLowerCase();
+      const missingMustHave = mustHave.filter(skill => !jobText.includes(skill));
+      if (!String(job.description || "").trim()) return json({ error: "A complete job description is required before creating an application pack" }, 409);
+      if (Number(job.score) < minimum) return json({ error: `This role scores ${job.score}%. Your tailoring gate is ${minimum}%.` }, 409);
+      if (missingMustHave.length) return json({ error: `Missing required skills: ${missingMustHave.join(", ")}` }, 409);
       const master = await env.DB.prepare("SELECT * FROM master_resume_profiles WHERE id = 1").first();
       if (!master) return json({ error: "Verified master resume profile is missing" }, 409);
       const profile = JSON.parse(master.profile_json);
@@ -250,6 +264,12 @@ async function route(request, env) {
     await env.DB.prepare(`INSERT INTO outreach (id, application_id, recruiter_name, recruiter_email, subject, body, scheduled_for)
       VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .bind(id, body.applicationId, body.recruiterName || null, body.recruiterEmail || null, body.subject, body.body, body.scheduledFor || null).run();
+    if (body.verifiedContact) {
+      const application = await env.DB.prepare("SELECT job_id FROM applications WHERE id = ?").bind(body.applicationId).first();
+      if (application) await env.DB.prepare(`INSERT INTO recruiter_contacts (job_id, name, email, source_url, verified)
+        VALUES (?, ?, ?, ?, 1) ON CONFLICT(job_id, email) DO UPDATE SET name=excluded.name, source_url=excluded.source_url, verified=1`)
+        .bind(application.job_id, body.recruiterName || null, body.recruiterEmail.trim().toLowerCase(), body.sourceUrl || "user-confirmed").run();
+    }
     await activity(env, "outreach_drafted", "Recruiter outreach draft created", "outreach", id);
     return json({ ok: true, id }, 201);
   }
@@ -283,8 +303,8 @@ async function route(request, env) {
     const body = await request.json();
     const current = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
     const next = { ...current, ...body };
-    await env.DB.prepare(`UPDATE settings SET target_role=?, alternate_titles=?, preferred_locations=?, required_skills=?, excluded_keywords=?, minimum_salary=?, daily_application_limit=?, require_approval=?, followups_enabled=?, followup_days=?, active_from=?, freshness_hours=?, minimum_match_score=?, browser_notifications=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`)
-      .bind(next.target_role, next.alternate_titles, next.preferred_locations, next.required_skills, next.excluded_keywords, next.minimum_salary, Number(next.daily_application_limit), next.require_approval ? 1 : 0, next.followups_enabled ? 1 : 0, Number(next.followup_days), next.active_from || null, Number(next.freshness_hours || 72), Number(next.minimum_match_score || 65), next.browser_notifications ? 1 : 0).run();
+    await env.DB.prepare(`UPDATE settings SET target_role=?, alternate_titles=?, preferred_locations=?, required_skills=?, excluded_keywords=?, minimum_salary=?, daily_application_limit=?, require_approval=?, followups_enabled=?, followup_days=?, active_from=?, freshness_hours=?, minimum_match_score=?, browser_notifications=?, tailoring_minimum_score=?, must_have_skills=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`)
+      .bind(next.target_role, next.alternate_titles, next.preferred_locations, next.required_skills, next.excluded_keywords, next.minimum_salary, Number(next.daily_application_limit), next.require_approval ? 1 : 0, next.followups_enabled ? 1 : 0, Number(next.followup_days), next.active_from || null, Number(next.freshness_hours || 72), Number(next.minimum_match_score || 65), next.browser_notifications ? 1 : 0, Number(next.tailoring_minimum_score || 75), next.must_have_skills || "").run();
     await activity(env, "settings_updated", "Search preferences updated");
     return json({ ok: true });
   }
