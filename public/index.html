@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f8f5">
+  <meta name="description" content="A mobile-first job search command center.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css?v=15">
+  <title>ApplyPilot</title>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#" aria-label="ApplyPilot home">
+        <span class="brand-mark">A</span>
+        <span>ApplyPilot</span>
+      </a>
+      <nav class="desktop-nav" aria-label="Primary navigation"></nav>
+      <div class="sidebar-profile">
+        <span class="avatar">RB</span>
+        <span><strong>Rizwan Baig</strong><small>Data Analyst</small></span>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="date-label"></p>
+          <h1 id="page-title">Today</h1>
+        </div>
+        <div class="top-actions">
+          <span class="agent-status" title="Live sources are checked every 10 minutes"><i></i><span>10-min scan active</span></span>
+          <button class="icon-button" id="notifications-button" title="Notifications" aria-label="Notifications">
+            <span class="bell-icon" aria-hidden="true"></span><span class="notification-dot"></span>
+          </button>
+          <button class="primary-button" id="demo-action">Run job scan</button>
+        </div>
+      </header>
+
+      <div id="app" class="page-content" aria-live="polite"></div>
+    </main>
+
+    <nav class="mobile-nav" aria-label="Primary navigation"></nav>
+  </div>
+
+  <div class="toast-region" id="toast-region" aria-live="assertive"></div>
+  <dialog id="detail-dialog"></dialog>
+  <script src="app.js?v=15"></script>
+</body>
+</html>

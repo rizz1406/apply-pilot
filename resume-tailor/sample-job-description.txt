@@ -1,0 +1,28 @@
+Senior Business Intelligence Analyst
+Nimbus Health — Remote (United States)
+
+Nimbus Health is seeking a Senior Business Intelligence Analyst to help product, operations, and finance teams make better decisions through reliable data products and clear analysis.
+
+Responsibilities
+- Partner with product, finance, marketing, and operations stakeholders to define KPIs and reporting requirements.
+- Build and maintain executive dashboards in Power BI.
+- Write advanced SQL to transform and analyze data from multiple business systems.
+- Automate recurring reporting and data-quality monitoring using Python.
+- Analyze customer funnels, retention, and operational performance to identify growth opportunities.
+- Design and evaluate A/B tests and communicate recommendations to non-technical audiences.
+- Document metric definitions and promote consistent reporting practices.
+- Mentor junior analysts and review analytical work.
+
+Required qualifications
+- 4+ years of professional analytics or business intelligence experience.
+- Strong SQL skills and experience with relational databases such as PostgreSQL.
+- Advanced Power BI dashboard development and data visualization experience.
+- Proficiency with Python and pandas for analysis and automation.
+- Experience presenting insights to cross-functional stakeholders.
+- Strong understanding of data quality, KPI design, and statistical analysis.
+
+Preferred qualifications
+- Experience with healthcare or other regulated industries.
+- Familiarity with dbt, Snowflake, and cloud data warehouses.
+- Experience mentoring analysts.
+- Knowledge of DAX and dimensional data modeling.

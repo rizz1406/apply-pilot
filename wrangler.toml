@@ -1,0 +1,19 @@
+name = "applypilot-api"
+main = "worker/index.js"
+compatibility_date = "2026-08-01"
+preview_urls = false
+
+[vars]
+APP_ORIGIN = "https://applypilot.pages.dev"
+GEMINI_MODEL = "gemini-3.5-flash"
+GEMINI_FAST_MODEL = "gemini-3.5-flash"
+DEMO_MODE = "false"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "applypilot"
+database_id = "5d5145ea-980e-48d1-9299-2b38a43cde3f"
+migrations_dir = "migrations"
+
+[triggers]
+crons = ["*/10 * * * *", "15 13 * * 1-5"]

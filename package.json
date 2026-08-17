@@ -1,0 +1,16 @@
+{
+  "name": "applypilot",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 migrations apply applypilot --local",
+    "db:remote": "wrangler d1 migrations apply applypilot --remote",
+    "test": "node --test --test-isolation=none test/*.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.28.1"
+  }
+}

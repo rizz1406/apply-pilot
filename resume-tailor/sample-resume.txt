@@ -1,0 +1,43 @@
+Jordan Lee
+Data Analyst
+jordan.lee@example.com | +1 555-014-7284 | Raleigh, NC
+linkedin.com/in/jordanlee-data | github.com/jordanlee-data
+
+SUMMARY
+Data analyst with 4 years of experience turning operational and customer data into dashboards, automated reports, and practical business recommendations.
+
+SKILLS
+SQL, Python, pandas, Excel, Power BI, Tableau, PostgreSQL, Google Sheets, Git, data visualization, dashboard development, data cleaning, statistical analysis, A/B testing
+
+EXPERIENCE
+
+Data Analyst — BrightCart Retail, Raleigh, NC
+June 2022–Present
+- Built Power BI dashboards tracking revenue, conversion, inventory, and customer retention for sales and operations leaders.
+- Automated weekly reporting with Python, pandas, and SQL, reducing manual preparation time from 8 hours to 2 hours.
+- Analyzed checkout funnel data and identified a high-friction step; the product team’s update improved completed purchases by 9%.
+- Created SQL data-quality checks that reduced recurring reporting errors by 30%.
+- Presented monthly findings to marketing, finance, and operations stakeholders.
+
+Junior Data Analyst — Northstar Logistics, Durham, NC
+July 2020–May 2022
+- Queried PostgreSQL shipment and delivery data to identify late-delivery patterns across five regional hubs.
+- Built Tableau dashboards used by operations managers to monitor delivery time, carrier performance, and backlog.
+- Standardized Excel reporting templates and reduced monthly reporting preparation by 5 hours.
+- Supported an A/B test of customer delivery notifications and summarized results for the product manager.
+
+PROJECTS
+
+Customer Churn Analysis — Python, pandas, scikit-learn
+- Cleaned and explored a public telecom dataset and built a logistic regression model to identify factors associated with churn.
+- Published the analysis and documentation at github.com/jordanlee-data/churn-analysis
+
+Retail Sales Dashboard — Power BI, SQL
+- Designed an interactive portfolio dashboard covering regional sales, product performance, and profit trends.
+- Project files: github.com/jordanlee-data/retail-dashboard
+
+EDUCATION
+B.S. Business Analytics — North Carolina State University, Raleigh, NC — 2020
+
+CERTIFICATIONS
+Microsoft Certified: Power BI Data Analyst Associate — learn.microsoft.com/credentials/certifications/power-bi-data-analyst-associate/
