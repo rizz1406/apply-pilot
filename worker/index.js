@@ -5,6 +5,7 @@ import { scoreJob } from "./matching.js";
 import { notify } from "./notifications.js";
 import { contentHash, createTailoredPack } from "./resume-tailor.js";
 import { evaluateApplicationGate } from "./quality-gate.js";
+import { createInterviewPrep } from "./application-tools.js";
 
 const json = (data, status = 200, extra = {}) => new Response(JSON.stringify(data), {
   status,
@@ -42,7 +43,7 @@ async function activity(env, type, message, entityType = null, entityId = null, 
 }
 
 async function bootstrap(env) {
-  const [settings, profile, jobs, applications, outreach, activities, standardSources, externalSources, leads, resumeVariants, analytics, contacts, roleAnalytics, sourceAnalytics] = await Promise.all([
+  const [settings, profile, jobs, applications, outreach, activities, standardSources, externalSources, leads, resumeVariants, analytics, contacts, roleAnalytics, sourceAnalytics, answers, interviews] = await Promise.all([
     env.DB.prepare("SELECT * FROM settings WHERE id = 1").first(),
     env.DB.prepare("SELECT * FROM candidate_profile WHERE id = 1").first(),
     env.DB.prepare("SELECT * FROM jobs WHERE status IN ('new','shortlisted') ORDER BY score DESC, discovered_at DESC LIMIT 100").all(),
@@ -69,13 +70,15 @@ async function bootstrap(env) {
       FROM applications a JOIN jobs j ON j.id = a.job_id GROUP BY j.title ORDER BY applications DESC, interviews DESC LIMIT 8`).all(),
     env.DB.prepare(`SELECT j.provider AS label, COUNT(*) AS applications,
       SUM(CASE WHEN a.stage IN ('interview','offer') THEN 1 ELSE 0 END) AS interviews
-      FROM applications a JOIN jobs j ON j.id = a.job_id GROUP BY j.provider ORDER BY applications DESC, interviews DESC LIMIT 8`).all()
+      FROM applications a JOIN jobs j ON j.id = a.job_id GROUP BY j.provider ORDER BY applications DESC, interviews DESC LIMIT 8`).all(),
+    env.DB.prepare("SELECT key, label, value, verified FROM application_answers ORDER BY label").all(),
+    env.DB.prepare("SELECT application_id, scheduled_at, notes, prep_json, updated_at FROM interview_workspaces").all()
   ]);
   const sources = [
     ...standardSources.results.map(source => ({ ...source, id: `core:${source.id}` })),
     ...externalSources.results.map(source => ({ ...source, id: `external:${source.id}` }))
   ].sort((a, b) => a.label.localeCompare(b.label));
-  return { settings, profile, jobs: jobs.results, applications: applications.results, outreach: outreach.results, activity: activities.results, sources, leads: leads.results, resumeVariants: resumeVariants.results, analytics: { ...analytics, byRole: roleAnalytics.results, bySource: sourceAnalytics.results }, contacts: contacts.results, demoMode: env.DEMO_MODE === "true" };
+  return { settings, profile, jobs: jobs.results, applications: applications.results, outreach: outreach.results, activity: activities.results, sources, leads: leads.results, resumeVariants: resumeVariants.results, analytics: { ...analytics, byRole: roleAnalytics.results, bySource: sourceAnalytics.results }, contacts: contacts.results, answers: answers.results, interviews: interviews.results, demoMode: env.DEMO_MODE === "true" };
 }
 
 async function route(request, env) {
@@ -189,6 +192,15 @@ async function route(request, env) {
     return json({ ok: true }, 201);
   }
 
+  if (method === "PUT" && path === "/api/application-answers") {
+    const body = await request.json();
+    const answers = Array.isArray(body.answers) ? body.answers : [];
+    await env.DB.batch(answers.filter(answer => answer.key && answer.label).map(answer => env.DB.prepare(`INSERT INTO application_answers (key, label, value, verified)
+      VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET label=excluded.label, value=excluded.value, verified=excluded.verified, updated_at=CURRENT_TIMESTAMP`)
+      .bind(answer.key, answer.label, answer.value || "", answer.verified ? 1 : 0)));
+    return json({ ok: true });
+  }
+
   const decision = pathMatch(path, "/api/jobs/:id/decision");
   if (method === "POST" && decision) {
     const body = await request.json();
@@ -242,6 +254,18 @@ async function route(request, env) {
       .bind(body.stage, body.stage, stage.id).run();
     await activity(env, "stage_changed", `Application moved to ${body.stage}`, "application", stage.id);
     return json({ ok: true });
+  }
+
+  const interviewPrep = pathMatch(path, "/api/applications/:id/interview-prep");
+  if (method === "POST" && interviewPrep) {
+    const application = await env.DB.prepare("SELECT a.id, j.title, j.company, j.description FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.id = ?").bind(interviewPrep.id).first();
+    if (!application) return json({ error: "Application not found" }, 404);
+    const profile = await env.DB.prepare("SELECT current_title FROM candidate_profile WHERE id = 1").first();
+    const prep = createInterviewPrep(application, { title: profile?.current_title });
+    await env.DB.prepare(`INSERT INTO interview_workspaces (application_id, prep_json) VALUES (?, ?)
+      ON CONFLICT(application_id) DO UPDATE SET prep_json=excluded.prep_json, updated_at=CURRENT_TIMESTAMP`).bind(application.id, JSON.stringify(prep)).run();
+    await activity(env, "interview_prep_created", `Interview prep created for ${application.title} at ${application.company}`, "application", application.id);
+    return json({ ok: true, prep });
   }
 
   const tailoredApproval = pathMatch(path, "/api/tailored-resumes/:id/approve");

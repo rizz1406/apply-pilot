@@ -95,7 +95,7 @@ function mapRemote(data) {
     color: colors[index % colors.length], location: job.location || "Location not listed",
     mode: job.workplace_type || "Review", salary: job.salary_text || "Salary not listed",
     source: job.provider, score: job.score, age: job.discovered_at, status: job.status,
-    reasons: parseJson(job.score_reasons, []), applyUrl: job.apply_url, description: job.description
+    reasons: parseJson(job.score_reasons, []), riskFlags: parseJson(job.risk_flags, []), applyUrl: job.apply_url, description: job.description
   }));
   const stageMap = { approved: "prepared", prepared: "prepared", applied: "applied", outreach: "outreach", interview: "interview", offer: "interview", rejected: "closed", withdrawn: "closed" };
   state.applications = data.applications.map(item => ({ id: item.id, title: item.title, company: item.company, stage: stageMap[item.stage] || "prepared", updated: item.updated_at, submittedAt: item.submitted_at, score: item.score, applyUrl: item.apply_url, rawStage: item.stage,
@@ -111,6 +111,8 @@ function mapRemote(data) {
   state.resumeVariants = data.resumeVariants || [];
   state.analytics = data.analytics || {};
   state.contacts = data.contacts || [];
+  state.answers = data.answers || [];
+  state.interviews = data.interviews || [];
   if (data.profile?.full_name) {
     state.profile = { fullName: data.profile.full_name, email: data.profile.email, currentTitle: data.profile.current_title, homeLocation: data.profile.home_location, targetSalary: data.profile.target_salary, stretchSalary: data.profile.stretch_salary };
   }
@@ -256,7 +258,7 @@ function jobCard(job) {
     <div class="company-logo" style="background:${job.color}">${job.initials}</div>
     <div>
       <div class="job-title-row"><h3 class="job-title">${job.title}</h3><span class="badge new">NEW</span></div>
-      <p class="job-company">${job.company}</p>
+      <p class="job-company">${job.company}</p>${job.riskFlags?.length ? `<p class="risk-note">Review: ${escapeHtml(job.riskFlags.join("; "))}</p>` : ""}
       <div class="job-meta"><span>${job.location}</span><span>${job.mode}</span><span>${job.salary}</span><span>${job.source}</span></div>
     </div>
     <div class="score-block"><div class="score">${job.score}%</div><div class="score-label">MATCH</div></div>
@@ -322,6 +324,7 @@ function renderSettings() {
       <div class="job-list" style="margin-top:14px">${(state.sources || []).map(source => `<div class="toggle-row"><span><strong>${source.label}</strong> · ${source.provider}/${source.organization}</span><button class="text-button danger-button" data-action="delete-source" data-id="${source.id}">Remove</button></div>`).join("") || `<p class="job-company">No live sources configured yet.</p>`}</div>
     </section>
     <section class="panel settings-section" style="grid-column:1/-1"><h2>Resume variants</h2><div class="job-list">${(state.resumeVariants || []).map(variant => `<div class="toggle-row"><span><strong>${escapeHtml(variant.name)}</strong><small>${escapeHtml(variant.target_titles)}</small></span><span class="badge">${escapeHtml(variant.filename)}</span></div>`).join("") || `<p class="job-company">No variants configured.</p>`}</div></section>
+    <section class="panel settings-section" style="grid-column:1/-1"><h2>Application answer library</h2><p class="job-company">Save verified answers for protected application forms. Copy them into official portals; ApplyPilot does not auto-submit forms.</p><div class="settings-grid">${[{ key: "notice_period", label: "Notice period" }, { key: "expected_ctc", label: "Expected CTC" }, { key: "work_authorization", label: "Work authorization" }, { key: "linkedin", label: "LinkedIn URL" }, { key: "portfolio", label: "Portfolio URL" }].map(field => { const answer = (state.answers || []).find(item => item.key === field.key) || {}; return `<div class="field"><label for="answer-${field.key}">${field.label}</label><input id="answer-${field.key}" value="${escapeHtml(answer.value || "")}" placeholder="Add your verified answer"></div>`; }).join("")}</div><button class="secondary-button" data-action="save-answers">Save answer library</button></section>
   </div>`;
 }
 
@@ -352,6 +355,7 @@ async function handleAction(event) {
   }
   if (action === "add-source") await addSource();
   if (action === "add-preset") await addPreset(event.currentTarget.dataset.preset);
+  if (action === "save-answers") await saveAnswerLibrary();
   if (action === "delete-source") await deleteSource(id);
   if (action === "open-lead") await openLead(id, event.currentTarget.dataset.url);
   if (action === "export-data") await exportData();
@@ -375,12 +379,14 @@ function showApplicationPack(id) {
     <div class="pack-grid"><section><h3>ATS coverage</h3><strong class="pack-score">${coverage.pct ?? "-"}%</strong><p class="job-company">Matched: ${escapeHtml((coverage.matched || []).join(", ") || "No tracked keywords")}</p><p class="job-company">Missing: ${escapeHtml((coverage.missing || []).join(", ") || "None")}</p></section><section><h3>Truth audit</h3><strong>${escapeHtml(audit.verdict || "review")}</strong><p class="job-company">${Number(audit.autoCorrected || 0)} grounded corrections applied</p><p class="job-company">${escapeHtml((audit.qualityIssues || []).join(" ") || "No quality issues detected")}</p></section></div>
     <div class="match-reasons"><h3>Tailored summary</h3><p>${escapeHtml(item.tailoredResume.summary)}</p><h3>Prioritized skills</h3><p>${escapeHtml(item.tailoredResume.skills)}</p></div>
     <div class="match-reasons"><h3>Cover letter</h3><p class="prewrap">${escapeHtml(item.coverLetter || "Not generated")}</p></div>
-    <div class="dialog-actions"><button class="secondary-button" id="download-json">Resume JSON</button><button class="secondary-button" id="download-tex">LaTeX</button><button class="secondary-button" id="open-application">Open application</button><button class="secondary-button" id="mark-applied">Mark applied</button><button class="primary-button" id="approve-tailored">Approve resume</button></div>
+    <div class="dialog-actions"><button class="secondary-button" id="download-json">Resume JSON</button><button class="secondary-button" id="download-tex">LaTeX</button><button class="secondary-button" id="download-pdf">Save as PDF</button><button class="secondary-button" id="open-application">Open application</button><button class="secondary-button" id="mark-applied">Mark applied</button><button class="primary-button" id="approve-tailored">Approve resume</button></div>
+    <button class="text-button pack-followup" id="prepare-interview">Create interview workspace</button>
     <button class="text-button pack-followup" id="create-followup">Create recruiter follow-up</button></div>`;
   dialog.showModal();
   dialog.querySelector(".dialog-close").onclick = () => dialog.close();
   dialog.querySelector("#download-json").onclick = () => downloadText(`${item.company}-${item.title}.json`.replace(/[^a-z0-9.-]+/gi, "_"), JSON.stringify(item.tailoredResume, null, 2), "application/json");
   dialog.querySelector("#download-tex").onclick = () => downloadText(`${item.company}-${item.title}.tex`.replace(/[^a-z0-9.-]+/gi, "_"), item.latex || "", "application/x-latex");
+  dialog.querySelector("#download-pdf").onclick = () => printResumePdf(item);
   dialog.querySelector("#open-application").onclick = () => window.open(item.applyUrl, "_blank", "noopener,noreferrer");
   dialog.querySelector("#mark-applied").onclick = async () => {
     try { await api(`/applications/${encodeURIComponent(item.id)}/stage`, { method: "PUT", body: JSON.stringify({ stage: "applied" }) }); dialog.close(); await connectBackend(); toast("Application marked as applied."); }
@@ -391,6 +397,24 @@ function showApplicationPack(id) {
     catch (error) { toast(error.message); }
   };
   dialog.querySelector("#create-followup").onclick = () => showFollowupComposer(item);
+  dialog.querySelector("#prepare-interview").onclick = () => createInterviewWorkspace(item);
+}
+
+function printResumePdf(item) {
+  const resume = item.tailoredResume;
+  const popup = window.open("", "_blank", "noopener,noreferrer");
+  if (!popup) return toast("Allow popups to save the PDF.");
+  popup.document.write(`<!doctype html><title>${escapeHtml(item.title)} resume</title><style>body{font-family:Arial,sans-serif;max-width:760px;margin:36px auto;line-height:1.45;color:#111}h1{margin-bottom:0}h2{border-bottom:1px solid #bbb;padding-bottom:4px;margin-top:26px}p{white-space:pre-wrap}</style><h1>${escapeHtml(resume.name || state.profile.fullName)}</h1><p>${escapeHtml(resume.title || item.title)}</p><h2>Summary</h2><p>${escapeHtml(resume.summary || "")}</p><h2>Skills</h2><p>${escapeHtml(resume.skills || "")}</p><h2>Experience</h2><p>${escapeHtml(JSON.stringify(resume.experience || [], null, 2))}</p>`);
+  popup.document.close(); popup.focus(); setTimeout(() => popup.print(), 250);
+}
+
+async function createInterviewWorkspace(application) {
+  try { const result = await api(`/applications/${encodeURIComponent(application.id)}/interview-prep`, { method: "POST" }); const prep = result.prep; dialog.innerHTML = `<div class="dialog-content"><div class="dialog-header"><div><span class="badge new">INTERVIEW PREP</span><h2>${escapeHtml(application.title)}</h2><p class="job-company">${escapeHtml(application.company)}</p></div><button class="dialog-close" aria-label="Close">x</button></div><h3>Company brief</h3><p>${escapeHtml(prep.companyBrief)}</p><h3>Practice questions</h3><ol>${prep.questions.map(question => `<li>${escapeHtml(question)}</li>`).join("")}</ol><h3>Focus skills</h3><p>${escapeHtml(prep.focusSkills.join(", ") || "Role requirements")}</p></div>`; dialog.querySelector(".dialog-close").onclick = () => dialog.close(); } catch (error) { toast(error.message); }
+}
+
+async function saveAnswerLibrary() {
+  const fields = [{ key: "notice_period", label: "Notice period" }, { key: "expected_ctc", label: "Expected CTC" }, { key: "work_authorization", label: "Work authorization" }, { key: "linkedin", label: "LinkedIn URL" }, { key: "portfolio", label: "Portfolio URL" }];
+  try { await api("/application-answers", { method: "PUT", body: JSON.stringify({ answers: fields.map(field => ({ ...field, value: document.querySelector(`#answer-${field.key}`).value.trim(), verified: true })) }) }); await connectBackend(); toast("Answer library saved."); } catch (error) { toast(error.message); }
 }
 
 function showFollowupComposer(application) {
