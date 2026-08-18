@@ -240,7 +240,7 @@ function renderToday() {
       ${metric("Active applications", activeApps, activeApps ? "Tracked in pipeline" : "None started")}
       ${metric("Follow-ups ready", followupsReady, followupsReady ? "Approve and send" : "None waiting")}
     </section>
-    ${state.leads.length ? `<section class="portal-leads"><div class="section-heading"><div><h2>Portal alerts</h2><p>Official links from restricted portals. Full scoring starts only after a complete JD is available.</p></div><span class="badge new">${state.leads.length} NEW</span></div>${genericLeads.length ? `<article class="generic-alert-queue"><div><span class="lead-provider">${escapeHtml(genericLeads[0].provider)}</span><h3>${genericLeads.length} alert${genericLeads.length === 1 ? "" : "s"} need job details</h3><p>These emails contained an official link but no reliable title. Review them one at a time to import a full JD.</p></div><button class="secondary-button" data-action="open-lead" data-id="${escapeHtml(genericLeads[0].id)}" data-url="${escapeHtml(genericLeads[0].url)}">Review next alert</button></article>` : ""}${titledLeads.length ? `<div class="lead-strip">${titledLeads.slice(0, 4).map(lead => `<article class="lead-item"><span class="lead-provider">${escapeHtml(lead.provider)}</span><h3>${escapeHtml(lead.subject)}</h3><button class="secondary-button" data-action="open-lead" data-id="${escapeHtml(lead.id)}" data-url="${escapeHtml(lead.url)}">Open official posting</button></article>`).join("")}</div>` : ""}</section>` : ""}
+    ${state.leads.length ? `<section class="portal-leads"><div class="section-heading"><div><h2>Portal alerts</h2><p>Official links from restricted portals. Full scoring starts only after a complete JD is available.</p></div><span><span class="badge new">${state.leads.length} NEW</span> <button class="text-button" data-action="show-alerts">View all</button></span></div>${genericLeads.length ? `<article class="generic-alert-queue"><div><span class="lead-provider">${escapeHtml(genericLeads[0].provider)}</span><h3>${genericLeads.length} alert${genericLeads.length === 1 ? "" : "s"} need job details</h3><p>These emails contained an official link but no reliable title. Review them one at a time to import a full JD.</p></div><button class="secondary-button" data-action="open-lead" data-id="${escapeHtml(genericLeads[0].id)}" data-url="${escapeHtml(genericLeads[0].url)}">Review next alert</button></article>` : ""}${titledLeads.length ? `<div class="lead-strip">${titledLeads.slice(0, 4).map(lead => `<article class="lead-item"><span class="lead-provider">${escapeHtml(lead.provider)}</span><h3>${escapeHtml(lead.subject)}</h3><button class="secondary-button" data-action="open-lead" data-id="${escapeHtml(lead.id)}" data-url="${escapeHtml(lead.url)}">Open official posting</button></article>`).join("")}</div>` : ""}</section>` : ""}
     <div class="content-grid">
       <section>
         <div class="section-heading"><div><h2>Recommended for you</h2><p>${remoteEnabled ? "Live records from your configured sources" : "Demo records until the cloud backend is connected"}</p></div><button class="text-button" data-action="${remoteEnabled ? "scan" : "reset"}">${remoteEnabled ? "Refresh sources" : "Reset demo"}</button></div>
@@ -251,7 +251,7 @@ function renderToday() {
       <aside class="panel activity-panel">
         <div class="section-heading"><div><h2>Agent activity</h2><p>Latest automated actions</p></div></div>
         <div class="activity-list">${state.activity.slice(0, 5).map(item => `<div class="activity-item"><span class="activity-dot"></span><p>${item.text}</p><time>${item.time}</time></div>`).join("")}</div>
-        <div><small>Gemini free quota</small><div class="quota-bar"><span></span></div><small>32% estimated daily use</small></div>
+        <div class="ai-usage"><small>AI resume packs created</small><strong>${state.analytics?.tailored_packs || 0}</strong><small>Provider quota is checked only when a tailored pack is requested.</small></div>
       </aside>
     </div>`;
 }
@@ -261,10 +261,12 @@ function metric(label, value, note) {
 }
 
 function jobCard(job) {
+  const skillReason = job.reasons.find(reason => /preferred skills found/i.test(reason)) || "Skill overlap needs JD review";
+  const experienceReason = job.reasons.find(reason => /experience requirement|seniority/i.test(reason)) || "Experience level checked";
   return `<article class="job-card" data-job-id="${job.id}">
     <div class="company-logo" style="background:${job.color}">${job.initials}</div>
     <div>
-      <div class="job-title-row"><h3 class="job-title">${job.title}</h3><span class="badge new">NEW</span></div>
+      <div class="match-summary"><strong>${job.score}% match</strong><span>${escapeHtml(skillReason)}</span><span>${escapeHtml(experienceReason)}</span></div><div class="job-title-row"><h3 class="job-title">${job.title}</h3><span class="badge new">NEW</span></div>
       <p class="job-company">${job.company}</p>${job.riskFlags?.length ? `<p class="risk-note">Review: ${escapeHtml(job.riskFlags.join("; "))}</p>` : ""}
       <div class="job-meta"><span>${job.location}</span><span>${job.mode}</span><span>${job.salary}</span><span>${job.source}</span></div>
     </div>
@@ -371,6 +373,7 @@ async function handleAction(event) {
   if (action === "save-answers") await saveAnswerLibrary();
   if (action === "delete-source") await deleteSource(id);
   if (action === "open-lead") await openLead(id, event.currentTarget.dataset.url);
+  if (action === "show-alerts") showAllAlerts();
   if (action === "export-data") await exportData();
   if (action === "review-pack") showApplicationPack(id);
   if (action === "approve-send-followup") await approveAndSendFollowup(id);
@@ -501,6 +504,13 @@ async function updateJob(id, status, message) {
   }
   if (job) job.status = status;
   saveState(); render(); toast(message);
+}
+
+function showAllAlerts() {
+  dialog.innerHTML = `<div class="dialog-content alert-dialog"><div class="dialog-header"><div><span class="badge new">${state.leads.length} ALERTS</span><h2>All portal alerts</h2><p class="job-company">These are official links, not confirmed matches. Review a JD before approving.</p></div><button class="dialog-close" aria-label="Close">x</button></div><div class="alert-list">${state.leads.map(lead => `<article><div><span class="lead-provider">${escapeHtml(lead.provider)}</span><h3>${escapeHtml(lead.subject || "Job posting")}</h3></div><button class="secondary-button" data-alert-id="${escapeHtml(lead.id)}" data-alert-url="${escapeHtml(lead.url)}">Open</button></article>`).join("")}</div></div>`;
+  dialog.showModal();
+  dialog.querySelector(".dialog-close").onclick = () => dialog.close();
+  dialog.querySelectorAll("[data-alert-id]").forEach(button => button.onclick = () => openLead(button.dataset.alertId, button.dataset.alertUrl));
 }
 
 function showJob(id) {

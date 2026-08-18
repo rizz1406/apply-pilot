@@ -63,7 +63,8 @@ async function bootstrap(env) {
       (SELECT COUNT(*) FROM applications WHERE stage = 'applied') AS applied,
       (SELECT COUNT(*) FROM applications WHERE stage IN ('interview','offer')) AS interviews,
       (SELECT COUNT(*) FROM applications WHERE stage = 'offer') AS offers,
-      (SELECT COUNT(*) FROM applications WHERE stage = 'rejected') AS rejected`).first(),
+      (SELECT COUNT(*) FROM applications WHERE stage = 'rejected') AS rejected,
+      (SELECT COUNT(*) FROM tailored_resumes) AS tailored_packs`).first(),
     env.DB.prepare("SELECT name, email, source_url, verified FROM recruiter_contacts WHERE verified = 1 ORDER BY created_at DESC LIMIT 100").all(),
     env.DB.prepare(`SELECT j.title AS label, COUNT(*) AS applications,
       SUM(CASE WHEN a.stage IN ('interview','offer') THEN 1 ELSE 0 END) AS interviews

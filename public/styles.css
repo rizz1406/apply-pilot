@@ -217,6 +217,9 @@ main { margin-left: var(--sidebar); min-height: 100vh; }
   font-size: 14px;
 }
 .job-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.match-summary { display: flex; flex-wrap: wrap; gap: 5px 10px; margin-bottom: 7px; color: #56675e; font-size: 10px; }
+.match-summary strong { color: #087443; }
+.match-summary span:not(:last-child)::after { content: "|"; margin-left: 10px; color: #b0bbb3; }
 .job-title { margin: 0; font-size: 15px; }
 .job-company { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
 .job-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 12px; color: #526057; font-size: 11px; }
@@ -236,6 +239,12 @@ main { margin-left: var(--sidebar); min-height: 100vh; }
 .activity-item time { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
 .quota-bar { height: 7px; margin: 10px 0 7px; overflow: hidden; border-radius: 3px; background: var(--surface-alt); }
 .quota-bar span { display: block; width: 32%; height: 100%; background: #d5a645; }
+.ai-usage { display: grid; gap: 4px; }
+.ai-usage strong { color: var(--green); font-size: 22px; }
+.alert-dialog { width: min(760px, calc(100vw - 32px)); }
+.alert-list { display: grid; gap: 8px; max-height: min(62vh, 520px); overflow-y: auto; padding-right: 4px; }
+.alert-list article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; }
+.alert-list h3 { margin: 4px 0 0; font-size: 13px; }
 
 .pipeline { overflow-x: auto; padding-bottom: 10px; }
 .pipeline-grid { min-width: 1040px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
