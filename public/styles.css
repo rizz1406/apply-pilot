@@ -193,6 +193,17 @@ main { margin-left: var(--sidebar); min-height: 100vh; }
 .generic-alert-queue h3 { margin: 5px 0; font-size: 14px; }
 .generic-alert-queue p { margin: 0; color: var(--muted); font-size: 12px; }
 .generic-alert-queue button { flex: 0 0 auto; }
+.internship-list { display: grid; gap: 12px; }
+.internship-card { padding: 16px; border: 1px solid var(--line); border-radius: 7px; background: white; }
+.internship-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.internship-head h3 { margin: 6px 0 4px; font-size: 16px; }
+.internship-head p { margin: 0; color: var(--muted); font-size: 12px; }
+.internship-head > strong { color: var(--green); white-space: nowrap; font-size: 14px; }
+.internship-facts { display: grid; grid-template-columns: 1fr 1fr 2fr; gap: 10px; margin: 15px 0; padding: 11px; border-radius: 5px; background: #f5f8f6; font-size: 12px; }
+.internship-facts span { display: grid; gap: 3px; }
+.internship-facts small { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.internship-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.internship-summary { margin: 13px 0 0; padding: 11px; border-left: 3px solid #0d7a4c; background: #f5f8f6; color: #405047; font-size: 12px; line-height: 1.5; }
 
 .job-list { display: grid; gap: 10px; }
 .job-card {

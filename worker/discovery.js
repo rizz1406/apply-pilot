@@ -110,7 +110,10 @@ export async function scanSources(env) {
         const internship = /\bintern(?:ship)?\b/i.test(`${job.title} ${job.description}`);
         const internshipSettings = internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
         const match = scoreJob(job, internshipSettings);
-        if (!match.eligible) continue;
+        // Internship hunting is intentionally broader: retain lower-fit roles in the
+        // configured location so the user can prioritize pay and transferable skills.
+        const internshipEligible = internship && match.score >= 40 && !match.reasons.includes("Location conflicts with the no-relocation preference");
+        if (!match.eligible && !internshipEligible) continue;
         const id = `${job.provider}:${job.externalId}`;
         const result = await env.DB.prepare(`INSERT OR IGNORE INTO jobs
           (id, external_id, source_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, published_at, score, score_reasons, risk_flags, duplicate_key, opportunity_type)

@@ -56,7 +56,7 @@ const seedState = {
 };
 
 const navItems = [
-  { id: "internships", label: "Internships", glyph: "I" },
+  { id: "internships", label: "Early career", glyph: "I" },
   { id: "today", label: "Review", glyph: "⌂" },
   { id: "pipeline", label: "Pipeline", glyph: "▥" },
   { id: "outreach", label: "Outreach", glyph: "✉" },
@@ -196,7 +196,7 @@ function renderNav() {
 }
 
 function render() {
-  const titles = { today: "Review jobs", internships: "Internships", pipeline: "Application pipeline", outreach: "Recruiter outreach", settings: "Preferences" };
+  const titles = { today: "Review jobs", internships: "Early Career & Internships", pipeline: "Application pipeline", outreach: "Recruiter outreach", settings: "Preferences" };
   document.querySelector("#page-title").textContent = titles[state.activeView];
   const initials = state.profile.fullName.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase();
   document.querySelector(".sidebar-profile .avatar").textContent = initials;
@@ -281,7 +281,16 @@ function jobCard(job) {
 
 function renderInternships() {
   const internships = state.jobs.filter(job => job.status === "new" && job.opportunityType === "internship");
-  app.innerHTML = `<section class="focus-strip"><div class="focus-copy"><span>Official early-career roles</span><h2>${internships.length ? `${internships.length} internship match${internships.length === 1 ? "" : "es"}` : "No internship matches yet"}</h2><p>Internships come from the same official company career boards and stay separate from full-time roles.</p></div></section><div class="section-heading"><div><h2>Internship opportunities</h2><p>Control these titles in Settings.</p></div><button class="text-button" data-action="scan">Refresh sources</button></div><div class="job-list">${internships.length ? internships.map(jobCard).join("") : `<div class="empty-state"><h2>Queue is clear</h2><p>No official internship listing matches your current titles, location, and skills yet.</p></div>`}</div>`;
+  app.innerHTML = `<section class="focus-strip"><div class="focus-copy"><span>Official early-career roles</span><h2>${internships.length ? `${internships.length} internship opportunity${internships.length === 1 ? "" : "ies"}` : "No internship opportunities yet"}</h2><p>This queue is broader than full-time matching. It keeps India/remote roles so you can compare pay and transferable skills.</p></div></section><div class="section-heading"><div><h2>Early Career & Internships</h2><p>Official company postings with pay, skills, timing, and a short summary.</p></div><button class="text-button" data-action="scan">Refresh sources</button></div><div class="internship-list">${internships.length ? internships.map(internshipCard).join("") : `<div class="empty-state"><h2>Queue is clear</h2><p>No official internship listing matches your India/remote location yet. The agent checks again every five minutes.</p></div>`}</div>`;
+}
+
+function internshipCard(job) {
+  const skillPool = String(state.settings.requiredSkills || "").split(",").map(skill => skill.trim()).filter(Boolean);
+  const skills = skillPool.filter(skill => String(job.description || "").toLowerCase().includes(skill.toLowerCase())).slice(0, 4);
+  const timing = job.age ? new Intl.DateTimeFormat("en", { day: "numeric", month: "short" }).format(new Date(job.age)) : "Posting date not listed";
+  const pay = job.salary && job.salary !== "Salary not listed" ? job.salary : "Pay not listed";
+  const summary = `${job.title} at ${job.company}. ${skills.length ? `The JD mentions ${skills.join(", ")}.` : "Review the JD for transferable skills."} ${pay === "Pay not listed" ? "Compensation is not disclosed." : `Compensation listed: ${pay}.`}`;
+  return `<article class="internship-card"><div class="internship-head"><div><span class="lead-provider">${escapeHtml(job.source)} | OFFICIAL BOARD</span><h3>${escapeHtml(job.title)}</h3><p>${escapeHtml(job.company)} | ${escapeHtml(job.location)}</p></div><strong>${job.score}% fit</strong></div><div class="internship-facts"><span><small>Pay</small>${escapeHtml(pay)}</span><span><small>Posted</small>${escapeHtml(timing)}</span><span><small>Top skills</small>${escapeHtml(skills.join(", ") || "Review JD")}</span></div><div class="internship-actions"><button class="secondary-button" data-action="toggle-intern-summary" data-id="${escapeHtml(job.id)}">Quick summary</button><button class="secondary-button" data-action="details" data-id="${escapeHtml(job.id)}">Review</button><button class="primary-button" data-action="approve" data-id="${escapeHtml(job.id)}">Prepare application</button></div><p class="internship-summary" id="intern-summary-${escapeHtml(job.id)}" hidden>${escapeHtml(summary)}</p></article>`;
 }
 
 function renderPipeline() {
@@ -374,6 +383,7 @@ async function handleAction(event) {
   if (action === "delete-source") await deleteSource(id);
   if (action === "open-lead") await openLead(id, event.currentTarget.dataset.url);
   if (action === "show-alerts") showAllAlerts();
+  if (action === "toggle-intern-summary") toggleInternSummary(id);
   if (action === "export-data") await exportData();
   if (action === "review-pack") showApplicationPack(id);
   if (action === "approve-send-followup") await approveAndSendFollowup(id);
@@ -504,6 +514,11 @@ async function updateJob(id, status, message) {
   }
   if (job) job.status = status;
   saveState(); render(); toast(message);
+}
+
+function toggleInternSummary(id) {
+  const summary = document.querySelector(`#intern-summary-${CSS.escape(String(id))}`);
+  if (summary) summary.hidden = !summary.hidden;
 }
 
 function showAllAlerts() {
