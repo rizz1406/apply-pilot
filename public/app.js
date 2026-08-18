@@ -2,6 +2,7 @@ const STORAGE_KEY = "applypilot-demo-state-v1";
 const API_TOKEN_KEY = "applypilot-api-token";
 const API_BASE = location.port === "4173" ? "http://127.0.0.1:8787/api" : "https://applypilot-api.rizwanmirza95551.workers.dev/api";
 let remoteEnabled = false;
+let showAllPortalAlerts = false;
 const SOURCE_PRESETS = [
   { provider: "greenhouse", organization: "cloudflare", label: "Cloudflare" },
   { provider: "greenhouse", organization: "datadog", label: "Datadog" },
@@ -203,7 +204,7 @@ function render() {
   document.querySelector(".sidebar-profile strong").textContent = state.profile.fullName;
   document.querySelector(".sidebar-profile small").textContent = state.profile.currentTitle;
   const action = document.querySelector("#demo-action");
-  action.textContent = state.activeView === "today" ? "Run job scan" : state.activeView === "settings" ? "Save changes" : "Add item";
+  action.textContent = state.activeView === "today" ? "Run job scan" : state.activeView === "settings" ? "Save changes" : state.activeView === "internships" ? "Import official JD" : "Add item";
   renderNav();
   if (state.activeView === "today") renderToday();
   if (state.activeView === "internships") renderInternships();
@@ -240,7 +241,7 @@ function renderToday() {
       ${metric("Active applications", activeApps, activeApps ? "Tracked in pipeline" : "None started")}
       ${metric("Follow-ups ready", followupsReady, followupsReady ? "Approve and send" : "None waiting")}
     </section>
-    ${state.leads.length ? `<section class="portal-leads"><div class="section-heading"><div><h2>Portal alerts</h2><p>Official links from restricted portals. Full scoring starts only after a complete JD is available.</p></div><span><span class="badge new">${state.leads.length} NEW</span> <button class="text-button" data-action="show-alerts">View all</button></span></div>${genericLeads.length ? `<article class="generic-alert-queue"><div><span class="lead-provider">${escapeHtml(genericLeads[0].provider)}</span><h3>${genericLeads.length} alert${genericLeads.length === 1 ? "" : "s"} need job details</h3><p>These emails contained an official link but no reliable title. Review them one at a time to import a full JD.</p></div><button class="secondary-button" data-action="open-lead" data-id="${escapeHtml(genericLeads[0].id)}" data-url="${escapeHtml(genericLeads[0].url)}">Review next alert</button></article>` : ""}${titledLeads.length ? `<div class="lead-strip">${titledLeads.slice(0, 4).map(lead => `<article class="lead-item"><span class="lead-provider">${escapeHtml(lead.provider)}</span><h3>${escapeHtml(lead.subject)}</h3><button class="secondary-button" data-action="open-lead" data-id="${escapeHtml(lead.id)}" data-url="${escapeHtml(lead.url)}">Open official posting</button></article>`).join("")}</div>` : ""}</section>` : ""}
+    ${state.leads.length ? `<section class="portal-leads"><div class="section-heading"><div><h2>Portal alerts</h2><p>Official links from restricted portals. Import a JD to calculate a real match and create a resume pack.</p></div><span><span class="badge new">${state.leads.length} NEW</span> <button class="text-button" data-action="toggle-all-alerts">${showAllPortalAlerts ? "Show less" : "Show all"}</button></span></div><div class="portal-alert-grid">${state.leads.slice(0, showAllPortalAlerts ? state.leads.length : 6).map(lead => `<article class="portal-alert-card"><div><span class="lead-provider">${escapeHtml(lead.provider)}</span><h3>${escapeHtml(lead.subject || "Job posting")}</h3><p>${genericLead(lead) ? "Title unavailable in alert email" : "Ready to import and score"}</p></div><button class="secondary-button" data-action="open-lead" data-id="${escapeHtml(lead.id)}" data-url="${escapeHtml(lead.url)}">Import JD</button></article>`).join("")}</div></section>` : ""}
     <div class="content-grid">
       <section>
         <div class="section-heading"><div><h2>Recommended for you</h2><p>${remoteEnabled ? "Live records from your configured sources" : "Demo records until the cloud backend is connected"}</p></div><button class="text-button" data-action="${remoteEnabled ? "scan" : "reset"}">${remoteEnabled ? "Refresh sources" : "Reset demo"}</button></div>
@@ -281,7 +282,7 @@ function jobCard(job) {
 
 function renderInternships() {
   const internships = state.jobs.filter(job => job.status === "new" && job.opportunityType === "internship");
-  app.innerHTML = `<section class="focus-strip"><div class="focus-copy"><span>Official early-career roles</span><h2>${internships.length ? `${internships.length} internship opportunity${internships.length === 1 ? "" : "ies"}` : "No internship opportunities yet"}</h2><p>This queue is broader than full-time matching. It keeps India/remote roles so you can compare pay and transferable skills.</p></div></section><div class="section-heading"><div><h2>Early Career & Internships</h2><p>Official company postings with pay, skills, timing, and a short summary.</p></div><button class="text-button" data-action="scan">Refresh sources</button></div><div class="internship-list">${internships.length ? internships.map(internshipCard).join("") : `<div class="empty-state"><h2>Queue is clear</h2><p>No official internship listing matches your India/remote location yet. The agent checks again every five minutes.</p></div>`}</div>`;
+  app.innerHTML = `<section class="focus-strip"><div class="focus-copy"><span>Official early-career roles</span><h2>${internships.length ? `${internships.length} internship opportunity${internships.length === 1 ? "" : "ies"}` : "No internship opportunities yet"}</h2><p>This queue is broader than full-time matching. It keeps India/remote roles so you can compare pay and transferable skills.</p></div></section><div class="section-heading"><div><h2>Early Career & Internships</h2><p>Official company postings with pay, skills, timing, and a short summary.</p></div><span><button class="text-button" data-action="import-internship">Import official JD</button> <button class="text-button" data-action="scan">Refresh sources</button></span></div><div class="internship-list">${internships.length ? internships.map(internshipCard).join("") : `<div class="empty-state"><h2>Queue is clear</h2><p>No official internship listing matches your India/remote location yet. Import an official JD to test the full application flow.</p><button class="primary-button" data-action="import-internship">Import official JD</button></div>`}</div>`;
 }
 
 function internshipCard(job) {
@@ -382,8 +383,9 @@ async function handleAction(event) {
   if (action === "save-answers") await saveAnswerLibrary();
   if (action === "delete-source") await deleteSource(id);
   if (action === "open-lead") await openLead(id, event.currentTarget.dataset.url);
-  if (action === "show-alerts") showAllAlerts();
+  if (action === "toggle-all-alerts") { showAllPortalAlerts = !showAllPortalAlerts; render(); }
   if (action === "toggle-intern-summary") toggleInternSummary(id);
+  if (action === "import-internship") showManualInternshipImport();
   if (action === "export-data") await exportData();
   if (action === "review-pack") showApplicationPack(id);
   if (action === "approve-send-followup") await approveAndSendFollowup(id);
@@ -612,6 +614,32 @@ function showLeadImport(lead) {
   };
 }
 
+function showManualInternshipImport() {
+  dialog.innerHTML = `<form class="dialog-content lead-import-dialog" id="internship-import-form"><div class="dialog-header"><div><span class="lead-provider">OFFICIAL POSTING</span><h2>Import internship JD</h2><p class="job-company">Copy the public job description from the company's official career page, then score and prepare it here.</p></div><button type="button" class="dialog-close" aria-label="Close">x</button></div><div class="field"><label for="intern-title">Internship title</label><input id="intern-title" required placeholder="Data Analyst Intern"></div><div class="field"><label for="intern-company">Company</label><input id="intern-company" required placeholder="Company name"></div><div class="field"><label for="intern-url">Official application URL</label><input id="intern-url" type="url" required placeholder="https://careers.company.com/jobs/..."> </div><div class="field"><label for="intern-location">Location and work mode</label><input id="intern-location" placeholder="Hyderabad, Remote India, Hybrid"></div><div class="field"><label for="intern-pay">Pay or stipend, if listed</label><input id="intern-pay" placeholder="Example: INR 20,000 per month"></div><div class="field"><label for="intern-description">Complete job description</label><textarea id="intern-description" required rows="9" placeholder="Paste the visible official job description"></textarea></div><div class="dialog-actions"><button class="primary-button" type="submit">Score internship</button></div></form>`;
+  dialog.showModal();
+  dialog.querySelector(".dialog-close").onclick = () => dialog.close();
+  dialog.querySelector("#internship-import-form").onsubmit = async event => {
+    event.preventDefault();
+    try {
+      const result = await api("/jobs/manual", { method: "POST", body: JSON.stringify({
+        title: dialog.querySelector("#intern-title").value,
+        company: dialog.querySelector("#intern-company").value,
+        applyUrl: dialog.querySelector("#intern-url").value,
+        location: dialog.querySelector("#intern-location").value,
+        workplaceType: dialog.querySelector("#intern-location").value,
+        salaryText: dialog.querySelector("#intern-pay").value,
+        description: dialog.querySelector("#intern-description").value,
+        opportunityType: "internship"
+      }) });
+      dialog.close();
+      await connectBackend();
+      state.activeView = "internships";
+      render();
+      toast(`${result.score}% fit. Review it, then prepare the application when ready.`);
+    } catch (error) { toast(error.message); }
+  };
+}
+
 function resetDemo() {
   const view = state.activeView;
   state = structuredClone(seedState);
@@ -637,6 +665,7 @@ document.addEventListener("click", event => {
 
 document.querySelector("#demo-action").addEventListener("click", async () => {
   if (state.activeView === "today") return runScan();
+  if (state.activeView === "internships") return showManualInternshipImport();
   if (state.activeView === "settings") {
     state.settings.role = document.querySelector("#role").value.trim() || seedState.settings.role;
     state.settings.alternateTitles = document.querySelector("#alternate-titles").value.trim();

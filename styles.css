@@ -184,6 +184,12 @@ main { margin-left: var(--sidebar); min-height: 100vh; }
 .panel { padding: 18px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
 .activity-panel { border-top: 3px solid #d7a337; }
 .portal-leads { margin-bottom: 22px; }
+.portal-alert-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.portal-alert-card { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+.portal-alert-card > div { min-width: 0; }
+.portal-alert-card h3 { margin: 6px 0 4px; overflow-wrap: anywhere; font-size: 14px; }
+.portal-alert-card p { margin: 0; color: var(--muted); font-size: 11px; }
+.portal-alert-card button { flex: 0 0 auto; }
 .lead-strip { display: grid; grid-template-columns: repeat(4, minmax(190px, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 4px; }
 .lead-item { min-width: 190px; padding: 14px; border: 1px solid var(--line); border-radius: 7px; background: white; }
 .lead-provider { color: var(--blue); font-size: 9px; font-weight: 800; text-transform: uppercase; }
@@ -352,6 +358,9 @@ dialog::backdrop { background: rgba(13, 23, 16, .5); backdrop-filter: blur(3px);
   .focus-copy h2 { font-size: 18px; }
   .focus-progress { min-width: 0; margin-top: 18px; }
   .lead-strip { grid-template-columns: repeat(4, 230px); }
+  .portal-alert-grid { grid-template-columns: 1fr; }
+  .portal-alert-card { align-items: flex-start; flex-direction: column; }
+  .portal-alert-card button { width: 100%; }
   .primary-button { padding: 0 12px; font-size: 12px; }
   .summary-grid { gap: 8px; margin-bottom: 19px; }
   .metric { min-height: 76px; padding: 11px; }

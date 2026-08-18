@@ -118,15 +118,18 @@ async function route(request, env) {
       applyUrl: lead.url,
       salaryText: body.salaryText?.trim() || ""
     };
-    const match = scoreJob(candidate, settings);
+    const internship = /\bintern(?:ship)?\b/i.test(candidate.title);
+    const scoreSettings = internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
+    const match = scoreJob(candidate, scoreSettings);
+    const eligible = match.eligible || (internship && match.score >= 40);
     const id = `alert:${await hashText(lead.url)}`;
-    await env.DB.prepare(`INSERT INTO jobs (id, external_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, score, score_reasons, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET company=excluded.company, title=excluded.title, location=excluded.location, workplace_type=excluded.workplace_type, description=excluded.description, salary_text=excluded.salary_text, score=excluded.score, score_reasons=excluded.score_reasons, status=excluded.status`)
-      .bind(id, lead.id, lead.provider, candidate.company, candidate.title, candidate.location, candidate.workplaceType, candidate.description.slice(0, 30000), candidate.applyUrl, candidate.salaryText, match.score, JSON.stringify(match.reasons), match.eligible ? "new" : "skipped").run();
+    await env.DB.prepare(`INSERT INTO jobs (id, external_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, score, score_reasons, status, opportunity_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET company=excluded.company, title=excluded.title, location=excluded.location, workplace_type=excluded.workplace_type, description=excluded.description, salary_text=excluded.salary_text, score=excluded.score, score_reasons=excluded.score_reasons, status=excluded.status, opportunity_type=excluded.opportunity_type`)
+      .bind(id, lead.id, lead.provider, candidate.company, candidate.title, candidate.location, candidate.workplaceType, candidate.description.slice(0, 30000), candidate.applyUrl, candidate.salaryText, match.score, JSON.stringify(match.reasons), eligible ? "new" : "skipped", internship ? "internship" : "full_time").run();
     await env.DB.prepare("UPDATE job_leads SET status = 'imported' WHERE id = ?").bind(lead.id).run();
-    await activity(env, "portal_job_scored", `${candidate.title} at ${candidate.company} scored ${match.score}%`, "job", id, { eligible: match.eligible });
-    return json({ ok: true, id, ...match }, 201);
+    await activity(env, "portal_job_scored", `${candidate.title} at ${candidate.company} scored ${match.score}%`, "job", id, { eligible });
+    return json({ ok: true, id, ...match, eligible }, 201);
   }
   if (method === "PUT" && leadParams) {
     const body = await request.json();
@@ -143,11 +146,13 @@ async function route(request, env) {
     if (!['http:', 'https:'].includes(parsedUrl.protocol)) return json({ error: "Only HTTP application URLs are allowed" }, 400);
     const settings = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
     const candidate = { title: body.title.trim(), company: body.company.trim(), location: body.location || "", workplaceType: body.workplaceType || "", description: body.description || "", applyUrl: parsedUrl.toString() };
-    const match = scoreJob(candidate, settings);
+    const internship = body.opportunityType === "internship" || /\bintern(?:ship)?\b/i.test(candidate.title);
+    const scoreSettings = internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
+    const match = scoreJob(candidate, scoreSettings);
     const id = `manual:${crypto.randomUUID()}`;
-    await env.DB.prepare(`INSERT INTO jobs (id, external_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, score, score_reasons)
-      VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(id, id, candidate.company, candidate.title, candidate.location, candidate.workplaceType, candidate.description.slice(0, 30000), candidate.applyUrl, body.salaryText || "", match.score, JSON.stringify(match.reasons)).run();
+    await env.DB.prepare(`INSERT INTO jobs (id, external_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, score, score_reasons, opportunity_type)
+      VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(id, id, candidate.company, candidate.title, candidate.location, candidate.workplaceType, candidate.description.slice(0, 30000), candidate.applyUrl, body.salaryText || "", match.score, JSON.stringify(match.reasons), internship ? "internship" : "full_time").run();
     await activity(env, "job_added", `Manually added ${candidate.title} at ${candidate.company}`, "job", id);
     return json({ ok: true, id, score: match.score }, 201);
   }
