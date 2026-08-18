@@ -592,14 +592,24 @@ async function deleteSource(id) {
 }
 
 async function openLead(id, url) {
-  window.open(url, "_blank", "noopener,noreferrer");
-  if (!remoteEnabled) return;
-  try {
-    await api(`/leads/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ status: "opened" }) });
-    const lead = state.leads.find(item => item.id === id);
-    if (lead) lead.status = "opened";
-    saveState();
-  } catch (error) { toast(error.message); }
+  const lead = state.leads.find(item => String(item.id) === String(id));
+  if (!lead) return window.open(url, "_blank", "noopener,noreferrer");
+  showLeadImport(lead);
+}
+
+function showLeadImport(lead) {
+  const genericTitle = /^(linkedin|naukri|indeed) job posting$/i.test(String(lead.subject || ""));
+  dialog.innerHTML = `<form class="dialog-content lead-import-dialog" id="lead-import-form"><div class="dialog-header"><div><span class="lead-provider">${escapeHtml(lead.provider)}</span><h2>Import and score job</h2><p class="job-company">Open the official posting, copy its visible JD, then score it here.</p></div><button type="button" class="dialog-close" aria-label="Close">x</button></div><div class="field"><label for="lead-title">Job title</label><input id="lead-title" required value="${genericTitle ? "" : escapeHtml(lead.subject)}" placeholder="Data Analyst Intern"></div><div class="field"><label for="lead-company">Company</label><input id="lead-company" required placeholder="Company name"></div><div class="field"><label for="lead-location">Location and work mode</label><input id="lead-location" placeholder="Hyderabad, Remote India, Hybrid"></div><div class="field"><label for="lead-salary">Pay or stipend, if listed</label><input id="lead-salary" placeholder="Example: INR 20,000 per month"></div><div class="field"><label for="lead-description">Complete job description</label><textarea id="lead-description" required rows="9" placeholder="Paste the visible official job description"></textarea></div><div class="dialog-actions"><button type="button" class="secondary-button" id="open-official-lead">Open official posting</button><button class="primary-button" type="submit">Score this job</button></div></form>`;
+  dialog.showModal();
+  dialog.querySelector(".dialog-close").onclick = () => dialog.close();
+  dialog.querySelector("#open-official-lead").onclick = () => window.open(lead.url, "_blank", "noopener,noreferrer");
+  dialog.querySelector("#lead-import-form").onsubmit = async event => {
+    event.preventDefault();
+    try {
+      const result = await api(`/leads/${encodeURIComponent(lead.id)}`, { method: "POST", body: JSON.stringify({ title: dialog.querySelector("#lead-title").value, company: dialog.querySelector("#lead-company").value, location: dialog.querySelector("#lead-location").value, workplaceType: dialog.querySelector("#lead-location").value, salaryText: dialog.querySelector("#lead-salary").value, description: dialog.querySelector("#lead-description").value }) });
+      dialog.close(); await connectBackend(); state.activeView = "today"; render(); toast(result.score >= state.settings.minimumMatchScore ? `${result.score}% match. Review it in your scored jobs queue.` : `${result.score}% match. Saved for reference, below your review threshold.`);
+    } catch (error) { toast(error.message); }
+  };
 }
 
 function resetDemo() {
