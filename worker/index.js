@@ -323,8 +323,8 @@ async function route(request, env) {
     const body = await request.json();
     const current = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
     const next = { ...current, ...body };
-    await env.DB.prepare(`UPDATE settings SET target_role=?, alternate_titles=?, preferred_locations=?, required_skills=?, excluded_keywords=?, minimum_salary=?, daily_application_limit=?, require_approval=?, followups_enabled=?, followup_days=?, active_from=?, freshness_hours=?, minimum_match_score=?, browser_notifications=?, tailoring_minimum_score=?, must_have_skills=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`)
-      .bind(next.target_role, next.alternate_titles, next.preferred_locations, next.required_skills, next.excluded_keywords, next.minimum_salary, Number(next.daily_application_limit), next.require_approval ? 1 : 0, next.followups_enabled ? 1 : 0, Number(next.followup_days), next.active_from || null, Number(next.freshness_hours || 72), Number(next.minimum_match_score || 65), next.browser_notifications ? 1 : 0, Number(next.tailoring_minimum_score || 75), next.must_have_skills || "").run();
+    await env.DB.prepare(`UPDATE settings SET target_role=?, alternate_titles=?, preferred_locations=?, required_skills=?, excluded_keywords=?, minimum_salary=?, daily_application_limit=?, require_approval=?, followups_enabled=?, followup_days=?, active_from=?, freshness_hours=?, minimum_match_score=?, browser_notifications=?, tailoring_minimum_score=?, must_have_skills=?, internship_titles=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`)
+      .bind(next.target_role, next.alternate_titles, next.preferred_locations, next.required_skills, next.excluded_keywords, next.minimum_salary, Number(next.daily_application_limit), next.require_approval ? 1 : 0, next.followups_enabled ? 1 : 0, Number(next.followup_days), next.active_from || null, Number(next.freshness_hours || 72), Number(next.minimum_match_score || 65), next.browser_notifications ? 1 : 0, Number(next.tailoring_minimum_score || 75), next.must_have_skills || "", next.internship_titles || "").run();
     await activity(env, "settings_updated", "Search preferences updated");
     return json({ ok: true });
   }
@@ -348,7 +348,7 @@ async function hashText(value) {
 }
 
 async function scheduled(env, controller) {
-  if (controller.cron === "*/10 * * * *") {
+  if (controller.cron === "*/5 * * * *") {
     const scan = await scanSources(env);
     const alerts = env.GMAIL_REFRESH_TOKEN ? await syncJobAlertEmails(env) : { discovered: 0 };
     if (scan.discovered) await notify(env, `ApplyPilot found ${scan.discovered} new matching ${scan.discovered === 1 ? "job" : "jobs"}.`);

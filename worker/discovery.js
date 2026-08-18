@@ -107,13 +107,15 @@ export async function scanSources(env) {
           const age = Date.now() - new Date(job.publishedAt).getTime();
           if (Number.isFinite(age) && age > Number(settings.freshness_hours) * 3600000) continue;
         }
-        const match = scoreJob(job, settings);
+        const internship = /\bintern(?:ship)?\b/i.test(`${job.title} ${job.description}`);
+        const internshipSettings = internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
+        const match = scoreJob(job, internshipSettings);
         if (!match.eligible) continue;
         const id = `${job.provider}:${job.externalId}`;
         const result = await env.DB.prepare(`INSERT OR IGNORE INTO jobs
-          (id, external_id, source_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, published_at, score, score_reasons, risk_flags, duplicate_key)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .bind(id, job.externalId, source.source_table === "sources" ? source.id : null, job.provider, job.company, job.title, job.location, job.workplaceType, job.description.slice(0, 30000), job.applyUrl, job.salaryText, job.publishedAt, match.score, JSON.stringify(match.reasons), JSON.stringify(jobRiskFlags(job)), duplicateKey(job)).run();
+          (id, external_id, source_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, published_at, score, score_reasons, risk_flags, duplicate_key, opportunity_type)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .bind(id, job.externalId, source.source_table === "sources" ? source.id : null, job.provider, job.company, job.title, job.location, job.workplaceType, job.description.slice(0, 30000), job.applyUrl, job.salaryText, job.publishedAt, match.score, JSON.stringify(match.reasons), JSON.stringify(jobRiskFlags(job)), duplicateKey(job), internship ? "internship" : "full_time").run();
         discovered += result.meta.changes || 0;
         if (result.meta.changes) {
           matches.push({ id, title: job.title, company: job.company, location: job.location, score: match.score, applyUrl: job.applyUrl });

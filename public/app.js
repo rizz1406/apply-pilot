@@ -56,6 +56,7 @@ const seedState = {
 };
 
 const navItems = [
+  { id: "internships", label: "Internships", glyph: "I" },
   { id: "today", label: "Review", glyph: "⌂" },
   { id: "pipeline", label: "Pipeline", glyph: "▥" },
   { id: "outreach", label: "Outreach", glyph: "✉" },
@@ -94,7 +95,7 @@ function mapRemote(data) {
     initials: job.company.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase(),
     color: colors[index % colors.length], location: job.location || "Location not listed",
     mode: job.workplace_type || "Review", salary: job.salary_text || "Salary not listed",
-    source: job.provider, score: job.score, age: job.discovered_at, status: job.status,
+    source: job.provider, score: job.score, age: job.discovered_at, status: job.status, opportunityType: job.opportunity_type || "full_time",
     reasons: parseJson(job.score_reasons, []), riskFlags: parseJson(job.risk_flags, []), applyUrl: job.apply_url, description: job.description
   }));
   const stageMap = { approved: "prepared", prepared: "prepared", applied: "applied", outreach: "outreach", interview: "interview", offer: "interview", rejected: "closed", withdrawn: "closed" };
@@ -135,6 +136,7 @@ function mapRemote(data) {
       ,browserNotifications: Boolean(data.settings.browser_notifications)
       ,tailoringMinimumScore: data.settings.tailoring_minimum_score || 75
       ,mustHaveSkills: data.settings.must_have_skills || ""
+      ,internshipTitles: data.settings.internship_titles || "Data Analyst Intern,Business Intelligence Intern,Data Engineering Intern,Analytics Intern"
     };
   }
 }
@@ -174,6 +176,7 @@ function saveState() {
 function counts() {
   return {
     today: state.jobs.filter(job => job.status === "new").length + state.leads.length,
+    internships: state.jobs.filter(job => job.status === "new" && job.opportunityType === "internship").length,
     pipeline: state.applications.filter(item => item.stage !== "closed").length,
     outreach: state.outreach.filter(item => item.status !== "sent").length,
     settings: ""
@@ -193,7 +196,7 @@ function renderNav() {
 }
 
 function render() {
-  const titles = { today: "Review jobs", pipeline: "Application pipeline", outreach: "Recruiter outreach", settings: "Preferences" };
+  const titles = { today: "Review jobs", internships: "Internships", pipeline: "Application pipeline", outreach: "Recruiter outreach", settings: "Preferences" };
   document.querySelector("#page-title").textContent = titles[state.activeView];
   const initials = state.profile.fullName.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase();
   document.querySelector(".sidebar-profile .avatar").textContent = initials;
@@ -203,6 +206,7 @@ function render() {
   action.textContent = state.activeView === "today" ? "Run job scan" : state.activeView === "settings" ? "Save changes" : "Add item";
   renderNav();
   if (state.activeView === "today") renderToday();
+  if (state.activeView === "internships") renderInternships();
   if (state.activeView === "pipeline") renderPipeline();
   if (state.activeView === "outreach") renderOutreach();
   if (state.activeView === "settings") renderSettings();
@@ -210,7 +214,7 @@ function render() {
 }
 
 function renderToday() {
-  const available = state.jobs.filter(job => job.status === "new");
+  const available = state.jobs.filter(job => job.status === "new" && job.opportunityType !== "internship");
   const portalAlerts = state.leads.length;
   const genericLead = lead => /^(linkedin|naukri|indeed) job posting$/i.test(String(lead.subject || "").trim()) || /^https?:\/\//i.test(String(lead.subject || ""));
   const titledLeads = state.leads.filter(lead => !genericLead(lead));
@@ -273,6 +277,11 @@ function jobCard(job) {
   </article>`;
 }
 
+function renderInternships() {
+  const internships = state.jobs.filter(job => job.status === "new" && job.opportunityType === "internship");
+  app.innerHTML = `<section class="focus-strip"><div class="focus-copy"><span>Official early-career roles</span><h2>${internships.length ? `${internships.length} internship match${internships.length === 1 ? "" : "es"}` : "No internship matches yet"}</h2><p>Internships come from the same official company career boards and stay separate from full-time roles.</p></div></section><div class="section-heading"><div><h2>Internship opportunities</h2><p>Control these titles in Settings.</p></div><button class="text-button" data-action="scan">Refresh sources</button></div><div class="job-list">${internships.length ? internships.map(jobCard).join("") : `<div class="empty-state"><h2>Queue is clear</h2><p>No official internship listing matches your current titles, location, and skills yet.</p></div>`}</div>`;
+}
+
 function renderPipeline() {
   const stages = [
     { id: "prepared", label: "Prepared" }, { id: "applied", label: "Applied" }, { id: "outreach", label: "Outreach" },
@@ -302,6 +311,7 @@ function renderSettings() {
     <section class="panel settings-section"><h2>Search profile</h2>
       <div class="field"><label for="role">Primary target designation</label><input id="role" value="${escapeHtml(s.role)}"><small>Your highest-priority role for matching.</small></div>
       <div class="field"><label for="alternate-titles">Additional target designations</label><textarea id="alternate-titles" rows="4" placeholder="Business Intelligence Analyst, Analytics Engineer, Junior Data Engineer">${escapeHtml(s.alternateTitles || "")}</textarea><small>Enter multiple roles separated by commas. Every role is included in job matching.</small></div>
+      <div class="field"><label for="internship-titles">Internship designations</label><textarea id="internship-titles" rows="3" placeholder="Data Analyst Intern, Business Intelligence Intern">${escapeHtml(s.internshipTitles || "Data Analyst Intern,Business Intelligence Intern,Data Engineering Intern,Analytics Intern")}</textarea><small>These appear in the separate Internships section.</small></div>
       <div class="field"><label for="location">Preferred location</label><input id="location" value="${s.location}"></div>
       <div class="field"><label for="skills">Required skills</label><input id="skills" value="${s.requiredSkills || "JavaScript,TypeScript,React,Node.js"}"></div>
       <div class="field"><label for="minimum-salary">Minimum CTC (LPA)</label><input id="minimum-salary" type="number" min="1" step="0.5" value="${(s.minimumSalary || 700000) / 100000}"><small>Target: ₹8-10 LPA · Stretch: ₹10-12 LPA</small></div>
@@ -595,6 +605,7 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
   if (state.activeView === "settings") {
     state.settings.role = document.querySelector("#role").value.trim() || seedState.settings.role;
     state.settings.alternateTitles = document.querySelector("#alternate-titles").value.trim();
+    state.settings.internshipTitles = document.querySelector("#internship-titles").value.trim();
     state.settings.location = document.querySelector("#location").value.trim() || seedState.settings.location;
     state.settings.dailyLimit = Number(document.querySelector("#limit").value) || 8;
     state.settings.minimumSalary = (Number(document.querySelector("#minimum-salary").value) || 7) * 100000;
@@ -624,6 +635,7 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
           ,browser_notifications: state.settings.browserNotifications
           ,tailoring_minimum_score: state.settings.tailoringMinimumScore
           ,must_have_skills: state.settings.mustHaveSkills
+          ,internship_titles: state.settings.internshipTitles
         }) });
       } catch (error) { return toast(error.message); }
     }
