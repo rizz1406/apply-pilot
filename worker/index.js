@@ -217,7 +217,7 @@ async function route(request, env) {
     if (!['shortlisted', 'skipped', 'approved'].includes(body.decision)) return json({ error: "Invalid decision" }, 400);
     const job = await env.DB.prepare("SELECT * FROM jobs WHERE id = ?").bind(decision.id).first();
     if (!job) return json({ error: "Job not found" }, 404);
-    await env.DB.prepare("UPDATE jobs SET status = ? WHERE id = ?").bind(body.decision, job.id).run();
+    if (body.decision !== "approved") await env.DB.prepare("UPDATE jobs SET status = ? WHERE id = ?").bind(body.decision, job.id).run();
     let application = null;
     if (body.decision === "approved") {
       const settings = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
@@ -253,6 +253,7 @@ async function route(request, env) {
       const contactEmails = [...new Set((job.description || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [])].slice(0, 5);
       if (contactEmails.length) await env.DB.batch(contactEmails.map(email => env.DB.prepare(`INSERT INTO recruiter_contacts (job_id, email, source_url, verified)
         VALUES (?, ?, ?, 0) ON CONFLICT(job_id, email) DO NOTHING`).bind(job.id, email.toLowerCase(), job.apply_url)));
+      await env.DB.prepare("UPDATE jobs SET status = 'approved' WHERE id = ?").bind(job.id).run();
     }
     await activity(env, "job_decision", `${body.decision}: ${job.title} at ${job.company}`, "job", job.id);
     return json({ ok: true, application });

@@ -40,3 +40,18 @@ test("audits and corrects an unsupported generated claim", async () => {
     assert.equal(pack.status, "review");
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test("creates a truthful resume pack when Gemini quota is unavailable", async () => {
+  const profile = {
+    name: "Rizwan Baig", title: "Data Analyst", email: "test@example.com", phone: "123", location: "Hyderabad",
+    summary: "Data Analyst building reporting workflows.", skills: "BigQuery, SQL, Power BI",
+    experience: [{ role: "Data Analyst", company: "DataBeat", location: "Hyderabad", dates: "2025 - Present", bullets: ["Built SQL reporting pipelines."] }],
+    projects: [], education: [], certifications: ["Data Analytics Essentials"]
+  };
+  const pack = await createTailoredPack({}, profile, { title: "Data Analyst", company: "Acme", description: "Requires SQL and BigQuery", score: 76 });
+  assert.equal(pack.model, "deterministic-fallback");
+  assert.equal(pack.audit.fallback, true);
+  assert.equal(pack.resume.experienceStructured[0].company, "DataBeat");
+  assert.deepEqual(pack.coverage.missing, []);
+  assert.match(pack.latex, /DataBeat/);
+});

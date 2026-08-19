@@ -91,6 +91,14 @@ function applyCorrections(resume, corrections) {
 }
 
 export async function createTailoredPack(env, profile, job) {
+  try {
+    return await createGeminiTailoredPack(env, profile, job);
+  } catch (error) {
+    return createDeterministicPack(profile, job, error);
+  }
+}
+
+async function createGeminiTailoredPack(env, profile, job) {
   const { email, phone, linkedin, github, website, ...evidenceProfile } = profile;
   const prompt = `Create a one-page ATS-safe resume for this job. Use ONLY facts explicitly present in MASTER PROFILE. You may rephrase, reorder, condense and omit. Never add or inflate skills, tools, employers, titles, dates, projects, certifications or metrics. Missing JD keywords must remain missing. Return JSON with summary, skills, experienceStructured, projectsStructured, educationStructured, certificationsStructured, keywordsMatched, keywordsMissing, matchScore, scoreBreakdown, scoreRationale, improvements, fabricationWarnings, matchVerdict.\nMASTER PROFILE:\n${JSON.stringify(evidenceProfile)}\nJOB DESCRIPTION:\n${job.description.slice(0, 20000)}`;
   let resume = normalizeResume(await geminiJson(env, prompt, false, TAILOR_SCHEMA), profile);
@@ -102,6 +110,40 @@ export async function createTailoredPack(env, profile, job) {
   const issues = [...new Set([...(Array.isArray(audit.qualityIssues) ? audit.qualityIssues : []), ...qualityChecks(resume)])];
   const finalAudit = { ...audit, corrections, qualityIssues: issues, autoCorrected: corrections.length, verdict: corrections.length || issues.length ? "review" : "pass" };
   return { resume, audit: finalAudit, coverage, latex: buildLatex(resume), status: finalAudit.verdict === "pass" ? "audit_pass" : "review", model: env.GEMINI_MODEL };
+}
+
+function createDeterministicPack(profile, job, error) {
+  const jd = text(job.description).toLowerCase();
+  const profileSkills = text(profile.skills).split(/[,;\n]+/).map(item => item.trim()).filter(Boolean);
+  const prioritizedSkills = [...profileSkills].sort((left, right) => Number(jd.includes(right.toLowerCase())) - Number(jd.includes(left.toLowerCase())));
+  const raw = {
+    summary: text(profile.summary),
+    skills: prioritizedSkills.join(", "),
+    experienceStructured: Array.isArray(profile.experience) ? profile.experience : [],
+    projectsStructured: Array.isArray(profile.projects) ? profile.projects : [],
+    educationStructured: Array.isArray(profile.education) ? profile.education : [],
+    certificationsStructured: (Array.isArray(profile.certifications) ? profile.certifications : []).map(item => typeof item === "string" ? { name: item, link: "" } : item),
+    keywordsMatched: [], keywordsMissing: [], improvements: [], fabricationWarnings: [],
+    matchScore: Number(job.score || 0),
+    scoreBreakdown: { keywordMatch: 0, experienceRelevance: 0, seniorityFit: 0 },
+    scoreRationale: "Created from the verified master resume because the AI provider was unavailable.",
+    matchVerdict: Number(job.score || 0) >= 75 ? "strong" : Number(job.score || 0) >= 50 ? "moderate" : "weak"
+  };
+  const resume = normalizeResume(raw, profile);
+  const coverage = keywordCoverage(resume, text(job.description));
+  resume.keywordsMatched = coverage.matched;
+  resume.keywordsMissing = coverage.missing;
+  if (coverage.pct !== null) resume.scoreBreakdown.keywordMatch = coverage.pct;
+  const qualityIssues = qualityChecks(resume);
+  const audit = {
+    corrections: [],
+    qualityIssues,
+    autoCorrected: 0,
+    verdict: "review",
+    fallback: true,
+    fallbackReason: error?.message || "AI provider unavailable"
+  };
+  return { resume, audit, coverage, latex: buildLatex(resume), status: "review", model: "deterministic-fallback" };
 }
 
 const latexEscape = value => text(value).replace(/([#$%&_{}])/g, "\\$1").replace(/~/g, "\\textasciitilde{}").replace(/\^/g, "\\textasciicircum{}");
