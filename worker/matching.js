@@ -15,7 +15,10 @@ export function scoreJob(job, settings) {
   const seniorTitleKeywords = ["senior", "lead", "principal", "staff", "manager", "director", "head of", "architect"];
   const disclosedSalaryMax = extractSalaryMaximum(job.salaryText);
   const workplace = `${location} ${job.workplaceType || job.workplace_type || ""}`.toLowerCase();
-  const remoteAllowed = locations.some(value => value.includes("remote"));
+  const locationIsOpen = locations.some(value => ["any", "anywhere"].includes(value));
+  const indiaWide = locations.some(value => ["india", "india-wide"].includes(value));
+  const indiaLocation = /\b(?:india|hyderabad|bengaluru|bangalore|pune|mumbai|delhi|gurugram|noida|chennai|kolkata|ahmedabad|kochi|jaipur)\b/.test(location);
+  const remoteAllowed = locationIsOpen || indiaWide || locations.some(value => value.includes("remote"));
   const isRemote = workplace.includes("remote");
   const remoteLocationEligible = remoteAllowed && isRemote && (!location || location.includes("india") || location.includes("global") || location.includes("worldwide"));
 
@@ -23,7 +26,8 @@ export function scoreJob(job, settings) {
     return { score: 0, eligible: false, reasons: ["Contains an excluded keyword"] };
   }
   const seniorKeyword = seniorTitleKeywords.find(keyword => title.includes(keyword));
-  if (seniorKeyword && !titles.some(value => value.includes(seniorKeyword))) {
+  const seniorTitleAllowed = seniorKeyword && titles.some(value => value.includes(seniorKeyword) && (title.includes(value) || value.includes(title)));
+  if (seniorKeyword && !seniorTitleAllowed) {
     return { score: 0, eligible: false, reasons: ["Seniority is above the configured target level"] };
   }
   if (settings.minimum_salary && disclosedSalaryMax && disclosedSalaryMax < Number(settings.minimum_salary)) {
@@ -37,15 +41,16 @@ export function scoreJob(job, settings) {
 
   const titleMatches = titles.filter(value => title.includes(value) || value.includes(title));
   const skillMatches = skills.filter(value => text.includes(value));
-  const locationMatch = locations.some(value => !value.includes("remote") && location.includes(value)) || remoteLocationEligible;
+  const locationMatch = locationIsOpen || (indiaWide && indiaLocation) || locations.some(value => !value.includes("remote") && !["india", "india-wide"].includes(value) && location.includes(value)) || remoteLocationEligible;
   if (location && !locationMatch) {
     return { score: 0, eligible: false, reasons: ["Location conflicts with the no-relocation preference"] };
   }
 
-  let score = 35;
+  let score = titleMatches.length ? 40 : 12;
   score += Math.min(35, titleMatches.length * 25);
   score += skills.length ? Math.round((skillMatches.length / skills.length) * 20) : 10;
   score += locationMatch ? 10 : 0;
+  if (!titleMatches.length && skillMatches.length < 4) score -= 10;
   score = Math.max(0, Math.min(100, score));
 
   const reasons = [];

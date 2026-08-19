@@ -355,9 +355,14 @@ dialog::backdrop { background: rgba(13, 23, 16, .5); backdrop-filter: blur(3px);
 .dialog-actions button { min-width: 0; white-space: normal; }
 .pack-modal .dialog-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
-.toast-region { position: fixed; right: 20px; bottom: 20px; z-index: 20; display: grid; gap: 8px; }
-.toast { width: min(340px, calc(100vw - 32px)); padding: 13px 15px; border-radius: 6px; background: #17271c; color: white; font-size: 12px; box-shadow: var(--shadow); animation: toast-in .2s ease-out; }
-@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+.toast-region { position: fixed; right: 22px; bottom: 22px; z-index: 30; display: grid; gap: 10px; pointer-events: none; }
+.toast { width: min(420px, calc(100vw - 32px)); padding: 16px 18px; display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 12px; border: 1px solid rgba(255,255,255,.16); border-radius: 9px; background: #12251a; color: white; box-shadow: 0 18px 45px rgba(12, 26, 17, .28); animation: toast-in .24s ease-out; }
+.toast-indicator { width: 10px; height: 10px; margin-top: 5px; border-radius: 50%; background: #55d698; box-shadow: 0 0 0 5px rgba(85,214,152,.14); }
+.toast strong { display: block; font-size: 14px; line-height: 1.2; }
+.toast p { margin: 5px 0 0; color: #dce8df; font-size: 12px; line-height: 1.45; }
+.toast-leave { animation: toast-out .18s ease-in forwards; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(14px) scale(.98); } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(8px) scale(.98); } }
 .mobile-nav { display: none; }
 
 @media (max-width: 980px) {
@@ -419,5 +424,6 @@ dialog::backdrop { background: rgba(13, 23, 16, .5); backdrop-filter: blur(3px);
   .mobile-nav .nav-button.active { background: var(--green-soft); color: var(--green); }
   .mobile-nav .nav-glyph { font-size: 16px; }
   .mobile-nav .nav-count { display: none; }
-  .toast-region { left: 16px; right: 16px; bottom: 80px; }
+  .toast-region { left: 14px; right: 14px; bottom: 78px; }
+  .toast { width: 100%; padding: 15px; }
 }

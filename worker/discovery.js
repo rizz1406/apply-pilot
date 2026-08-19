@@ -96,6 +96,7 @@ export async function scanSources(env) {
   let discovered = 0;
   let expired = 0;
   let considered = 0;
+  let alreadyTracked = 0;
   const skipped = { stale: 0, location: 0, experience: 0, salary: 0, excluded: 0, lowFit: 0 };
   const errors = [];
   const matches = [];
@@ -113,13 +114,15 @@ export async function scanSources(env) {
             continue;
           }
         }
-        const internship = /\bintern(?:ship)?\b/i.test(`${job.title} ${job.description}`);
+        const internship = isEarlyCareerJob(job);
         const internshipSettings = internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
         const match = scoreJob(job, internshipSettings);
+        const id = `${job.provider}:${job.externalId}`;
         // Internship hunting is intentionally broader: retain lower-fit roles in the
         // configured location so the user can prioritize pay and transferable skills.
         const internshipEligible = internship && match.score >= 40 && !match.reasons.includes("Location conflicts with the no-relocation preference");
         if (!match.eligible && !internshipEligible) {
+          await env.DB.prepare("UPDATE jobs SET status = 'skipped' WHERE id = ? AND status IN ('new','shortlisted')").bind(id).run();
           const reason = match.reasons[0] || "";
           if (reason.includes("Location conflicts")) skipped.location += 1;
           else if (reason.includes("Requires at least")) skipped.experience += 1;
@@ -128,7 +131,6 @@ export async function scanSources(env) {
           else skipped.lowFit += 1;
           continue;
         }
-        const id = `${job.provider}:${job.externalId}`;
         const result = await env.DB.prepare(`INSERT OR IGNORE INTO jobs
           (id, external_id, source_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, published_at, score, score_reasons, risk_flags, duplicate_key, opportunity_type)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -136,7 +138,7 @@ export async function scanSources(env) {
         discovered += result.meta.changes || 0;
         if (result.meta.changes) {
           matches.push({ id, title: job.title, company: job.company, location: job.location, score: match.score, applyUrl: job.applyUrl });
-        }
+        } else alreadyTracked += 1;
       }
       const trackedQuery = source.source_table === "sources"
         ? env.DB.prepare("SELECT id, published_at FROM jobs WHERE source_id = ? AND status IN ('new','shortlisted')").bind(source.id)
@@ -157,6 +159,10 @@ export async function scanSources(env) {
   }
 
   await env.DB.prepare("INSERT INTO activity_log (event_type, message, metadata) VALUES ('scan', ?, ?)")
-    .bind(`Job scan completed: ${discovered} new matches, ${expired} expired`, JSON.stringify({ discovered, expired, considered, skipped, errors })).run();
-  return { discovered, expired, considered, skipped, scanned: sources.length, errors, matches };
+    .bind(`Job scan completed: ${discovered} new matches, ${alreadyTracked} already tracked, ${expired} expired`, JSON.stringify({ discovered, alreadyTracked, expired, considered, skipped, errors })).run();
+  return { discovered, alreadyTracked, expired, considered, skipped, scanned: sources.length, errors, matches };
+}
+
+function isEarlyCareerJob(job) {
+  return /\b(?:intern(?:ship)?|new[ -]?grad|graduate|early[ -]?career|trainee|apprentice|fresher)\b/i.test(`${job.title} ${job.description}`);
 }

@@ -47,7 +47,7 @@ async function bootstrap(env) {
     env.DB.prepare("SELECT * FROM settings WHERE id = 1").first(),
     env.DB.prepare("SELECT * FROM candidate_profile WHERE id = 1").first(),
     env.DB.prepare("SELECT * FROM jobs WHERE status IN ('new','shortlisted') ORDER BY score DESC, discovered_at DESC LIMIT 100").all(),
-    env.DB.prepare(`SELECT a.*, j.title, j.company, j.score, j.apply_url, j.description,
+    env.DB.prepare(`SELECT a.*, j.title, j.company, j.score, j.apply_url, j.description, j.opportunity_type,
       t.resume_json AS tailored_resume_json, t.audit_json AS resume_audit_json, t.keyword_coverage, t.match_score AS tailored_match_score, t.latex_content, t.status AS tailored_status
       FROM applications a JOIN jobs j ON j.id = a.job_id LEFT JOIN tailored_resumes t ON t.id = a.tailored_resume_id
       ORDER BY a.updated_at DESC LIMIT 100`).all(),

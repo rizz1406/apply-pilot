@@ -105,7 +105,7 @@ function mapRemote(data) {
     reasons: parseJson(job.score_reasons, []), riskFlags: parseJson(job.risk_flags, []), applyUrl: job.apply_url, description: job.description
   }));
   const stageMap = { approved: "approved", prepared: "prepared", applied: "applied", outreach: "outreach", interview: "interview", offer: "interview", rejected: "closed", withdrawn: "closed" };
-  state.applications = data.applications.map(item => ({ id: item.id, title: item.title, company: item.company, stage: stageMap[item.stage] || "prepared", updated: item.updated_at, submittedAt: item.submitted_at, score: item.score, applyUrl: item.apply_url, rawStage: item.stage,
+  state.applications = data.applications.map(item => ({ id: item.id, title: item.title, company: item.company, stage: stageMap[item.stage] || "prepared", updated: item.updated_at, submittedAt: item.submitted_at, score: item.score, applyUrl: item.apply_url, rawStage: item.stage, opportunityType: item.opportunity_type || "full_time",
     tailoredResumeId: item.tailored_resume_id, tailoredResume: parseJson(item.tailored_resume_json, null), resumeAudit: parseJson(item.resume_audit_json, null), keywordCoverage: parseJson(item.keyword_coverage, null), tailoredScore: item.tailored_match_score, latex: item.latex_content, tailoredStatus: item.tailored_status, coverLetter: item.cover_letter }));
   state.outreach = data.outreach.map(item => ({
     id: item.id, applicationId: item.application_id, name: item.recruiter_name || "Recruiter not assigned", email: item.recruiter_email || "",
@@ -143,7 +143,7 @@ function mapRemote(data) {
       ,tailoringMinimumScore: data.settings.tailoring_minimum_score || 75
       ,mustHaveSkills: data.settings.must_have_skills || ""
       ,internshipTitles: data.settings.internship_titles || "Data Analyst Intern,Business Intelligence Intern,Data Engineering Intern,Analytics Intern"
-      ,experienceToleranceYears: data.settings.experience_tolerance_years ?? 1
+      ,experienceToleranceYears: data.settings.experience_tolerance_years ?? 2
     };
   }
 }
@@ -245,7 +245,7 @@ function renderToday() {
     </section>
     <div class="content-grid">
       <section>
-        <div class="section-heading"><div><h2>Recommended for you</h2><p>${remoteEnabled ? "Live records from your configured sources" : "Demo records until the cloud backend is connected"}</p></div><button class="text-button" data-action="${remoteEnabled ? "scan" : "reset"}">${remoteEnabled ? "Refresh sources" : "Reset demo"}</button></div>
+        <div class="section-heading"><div><h2>Recommended for you</h2><p>${remoteEnabled ? "Live official postings scored against your skills, target roles, location, and allowed experience gap." : "Demo records until the cloud backend is connected"}</p></div><button class="text-button" data-action="${remoteEnabled ? "scan" : "reset"}">${remoteEnabled ? "Refresh sources" : "Reset demo"}</button></div>
         <div class="job-list">
           ${available.length ? available.map(jobCard).join("") : `<div class="empty-state"><h2>Review queue complete</h2><p>You handled every current match. Run another scan or reset the demo to restore sample jobs.</p><button class="primary-button" data-action="scan">Run job scan</button></div>`}
         </div>
@@ -266,10 +266,11 @@ function jobCard(job) {
   const skillReason = job.reasons.find(reason => /preferred skills found/i.test(reason)) || "Skill overlap needs JD review";
   const experienceReason = job.reasons.find(reason => /experience requirement|seniority/i.test(reason)) || "Experience level checked";
   const fitLabel = job.score >= 90 ? "Strong match" : job.score >= 75 ? "Good match" : "Eligible match";
+  const readiness = job.score >= 75 ? "STRONG FIT" : "REVIEW FIT";
   return `<article class="job-card" data-job-id="${job.id}">
     <div class="company-logo" style="background:${job.color}">${job.initials}</div>
     <div>
-      <div class="match-summary"><strong>${job.score}% ${fitLabel}</strong><span>${escapeHtml(skillReason)}</span><span>${escapeHtml(experienceReason)}</span></div><div class="job-title-row"><h3 class="job-title">${job.title}</h3><span class="badge new">READY TO APPLY</span></div>
+      <div class="match-summary"><strong>${job.score}% ${fitLabel}</strong><span>${escapeHtml(skillReason)}</span><span>${escapeHtml(experienceReason)}</span></div><div class="job-title-row"><h3 class="job-title">${job.title}</h3><span class="badge new">${readiness}</span></div>
       <p class="job-company">${job.company}</p>${job.riskFlags?.length ? `<p class="risk-note">Review: ${escapeHtml(job.riskFlags.join("; "))}</p>` : ""}
       <div class="job-meta"><span>${job.location}</span><span>${job.mode}</span><span>${job.salary}</span><span>${job.source}</span></div>
     </div>
@@ -284,7 +285,9 @@ function jobCard(job) {
 
 function renderInternships() {
   const internships = state.jobs.filter(job => job.status === "new" && job.opportunityType === "internship");
-  app.innerHTML = `<section class="focus-strip"><div class="focus-copy"><span>Official early-career roles</span><h2>${internships.length ? `${internships.length} internship opportunit${internships.length === 1 ? "y" : "ies"}` : "No internship opportunities yet"}</h2><p>This queue is broader than full-time matching. It keeps India/remote roles so you can compare pay and transferable skills.</p></div></section><div class="section-heading"><div><h2>Early Career & Internships</h2><p>Automatically scored official company postings with pay, skills, timing, and a short summary.</p></div><button class="text-button" data-action="scan">Refresh sources</button></div><div class="internship-list">${internships.length ? internships.map(internshipCard).join("") : `<div class="empty-state"><h2>Queue is clear</h2><p>The agent is monitoring your official company sources for India and remote internships. New roles are scored before they appear here.</p><button class="primary-button" data-action="scan">Run job scan</button></div>`}</div>`;
+  const prepared = state.applications.filter(item => item.opportunityType === "internship" && !["closed", "rejected"].includes(item.rawStage));
+  const preparedMarkup = prepared.length ? `<section class="section-stack"><div class="section-heading"><div><h2>Your early-career applications</h2><p>Prepared roles stay visible here until they are closed, so you can return to the resume pack and follow-up history.</p></div></div><div class="internship-list">${prepared.map(item => `<article class="internship-card prepared-internship"><div class="internship-head"><div><span class="lead-provider">${escapeHtml(item.stage).toUpperCase()}</span><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.company)}</p></div><strong>${item.tailoredScore || item.score || 0}% fit</strong></div><div class="internship-facts"><span><small>Stage</small>${escapeHtml(item.stage === "approved" ? "Ready to apply" : item.stage)}</span><span><small>Resume</small>${item.tailoredResumeId ? "Tailored pack saved" : "Not created"}</span><span><small>Updated</small>${escapeHtml(item.updated || "Recently")}</span></div><div class="internship-actions"><button class="secondary-button" data-action="review-pack" data-id="${escapeHtml(item.id)}">Review resume pack</button><button class="secondary-button" data-action="open-application" data-url="${escapeHtml(item.applyUrl || "")}">Open application</button></div></article>`).join("")}</div></section>` : "";
+  app.innerHTML = `<section class="focus-strip"><div class="focus-copy"><span>Official early-career roles</span><h2>${internships.length ? `${internships.length} early-career opportunit${internships.length === 1 ? "y" : "ies"}` : prepared.length ? "Your early-career application is ready" : "No early-career opportunities yet"}</h2><p>This is intentionally broader: internships, graduate, trainee, apprentice, and fresher roles from official boards. Pay and transferable skills are shown before you spend time applying.</p></div></section><section class="summary-grid"><article class="metric"><span>Open early-career roles</span><strong>${internships.length}</strong><small>Official postings only</small></article><article class="metric"><span>Prepared applications</span><strong>${prepared.length}</strong><small>Kept here for tracking</small></article><article class="metric"><span>Search approach</span><strong>Broad</strong><small>Includes transferable roles</small></article><article class="metric"><span>Freshness window</span><strong>${state.settings.freshnessHours || 72}h</strong><small>Older postings are hidden</small></article></section><div class="section-heading"><div><h2>Early Career & Internships</h2><p>Automatically scored official postings with pay, skills, timing, and a short summary.</p></div><button class="text-button" data-action="scan">Refresh sources</button></div><div class="internship-list">${internships.length ? internships.map(internshipCard).join("") : `<div class="empty-state"><h2>No current early-career match</h2><p>The last official-board scan did not return an internship, graduate, trainee, apprentice, or fresher role that fits the India-wide search. Refreshing checks the boards again.</p><button class="primary-button" data-action="scan">Run job scan</button></div>`}</div>${preparedMarkup}`;
 }
 
 function internshipCard(job) {
@@ -374,6 +377,11 @@ async function handleAction(event) {
   if (action === "approve") approveJob(id);
   if (action === "skip") updateJob(id, "skipped", "Job skipped and removed from your queue");
   if (action === "details") showJob(id);
+  if (action === "open-application") {
+    const applyUrl = event.currentTarget.dataset.url;
+    if (applyUrl) window.open(applyUrl, "_blank", "noopener,noreferrer");
+    else toast("The official application URL is not available for this record.", { title: "Application link unavailable" });
+  }
   if (action === "reset") resetDemo();
   if (action === "scan") runScan();
   if (action === "outreach") reviewOutreach(id);
@@ -662,7 +670,7 @@ async function runScan() {
         ["too old", skipped.stale], ["location", skipped.location], ["experience", skipped.experience],
         ["salary", skipped.salary], ["low fit", skipped.lowFit]
       ].filter(([, count]) => count).map(([label, count]) => `${count} ${label}`).join(", ");
-      return toast(`Checked ${result.considered || 0} postings across ${result.scanned} official sources. ${result.discovered} new matches.${exclusions ? ` Excluded: ${exclusions}.` : ""}`);
+      return toast(`${result.considered || 0} official postings checked across ${result.scanned} sources. ${result.discovered || 0} new match${result.discovered === 1 ? "" : "es"}; ${result.alreadyTracked || 0} already in your queue.${exclusions ? ` Excluded: ${exclusions}.` : ""}`, { title: result.discovered ? "New opportunities found" : "Scan complete", duration: 4200 });
     } catch (error) { return toast(error.message); }
   }
   state.scannedAt = new Date().toISOString();
@@ -753,12 +761,12 @@ function resetDemo() {
   saveState(); render(); toast("Demo data restored.");
 }
 
-function toast(message) {
+function toast(message, { title = "ApplyPilot", duration = 4000, tone = "info" } = {}) {
   const node = document.createElement("div");
-  node.className = "toast";
-  node.textContent = message;
+  node.className = `toast toast-${tone}`;
+  node.innerHTML = `<span class="toast-indicator" aria-hidden="true"></span><div><strong>${escapeHtml(title)}</strong><p>${escapeHtml(message)}</p></div>`;
   document.querySelector("#toast-region").append(node);
-  setTimeout(() => node.remove(), 3200);
+  setTimeout(() => { node.classList.add("toast-leave"); setTimeout(() => node.remove(), 180); }, duration);
 }
 
 document.addEventListener("click", event => {
