@@ -46,7 +46,13 @@
   </div>
 
   <div class="toast-region" id="toast-region" aria-live="assertive"></div>
+  <div class="operation-overlay" id="operation-overlay" hidden>
+    <div class="operation-card" role="status" aria-live="polite">
+      <span class="operation-spinner" aria-hidden="true"></span>
+      <div><strong id="operation-title">Preparing application</strong><p id="operation-detail">Building your ATS resume pack from the verified profile.</p></div>
+    </div>
+  </div>
   <dialog id="detail-dialog"></dialog>
-  <script src="app.js?v=40"></script>
+  <script src="app.js?v=41"></script>
 </body>
 </html>

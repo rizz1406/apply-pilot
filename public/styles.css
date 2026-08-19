@@ -368,6 +368,12 @@ dialog::backdrop { background: rgba(13, 23, 16, .5); backdrop-filter: blur(3px);
 .toast strong { display: block; font-size: 14px; line-height: 1.2; }
 .toast p { margin: 5px 0 0; color: #dce8df; font-size: 12px; line-height: 1.45; }
 .toast-leave { animation: toast-out .18s ease-in forwards; }
+.operation-overlay { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 20px; background: rgba(13, 23, 16, .42); backdrop-filter: blur(4px); }
+.operation-overlay[hidden] { display: none; }
+.operation-card { width: min(420px, 100%); padding: 22px; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 15px; align-items: center; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: #12251a; color: white; box-shadow: 0 24px 70px rgba(12, 26, 17, .32); }
+.operation-card strong { display: block; font-size: 17px; }
+.operation-card p { margin: 6px 0 0; color: #dce8df; font-size: 13px; line-height: 1.45; }
+.operation-spinner { width: 30px; height: 30px; border: 3px solid rgba(255,255,255,.25); border-top-color: #55d698; border-radius: 50%; animation: scan-spin .75s linear infinite; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(14px) scale(.98); } }
 @keyframes toast-out { to { opacity: 0; transform: translateY(8px) scale(.98); } }
 .mobile-nav { display: none; }

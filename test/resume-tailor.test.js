@@ -55,3 +55,15 @@ test("creates a truthful resume pack when Gemini quota is unavailable", async ()
   assert.deepEqual(pack.coverage.missing, []);
   assert.match(pack.latex, /DataBeat/);
 });
+
+test("falls back immediately after one Gemini 429 response", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return new Response("quota exhausted", { status: 429 }); };
+  try {
+    const profile = { ...resume, experience: resume.experienceStructured, projects: [], education: [], certifications: [] };
+    const pack = await createTailoredPack({ GEMINI_API_KEY: "key", GEMINI_MODEL: "gemini-test" }, profile, { title: "Data Analyst", company: "Acme", description: "SQL and BigQuery", score: 76 });
+    assert.equal(calls, 1);
+    assert.equal(pack.model, "deterministic-fallback");
+  } finally { globalThis.fetch = originalFetch; }
+});

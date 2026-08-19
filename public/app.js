@@ -52,6 +52,8 @@ const navItems = [
 let state = loadState();
 const app = document.querySelector("#app");
 const dialog = document.querySelector("#detail-dialog");
+const operationOverlay = document.querySelector("#operation-overlay");
+const pendingApprovals = new Set();
 dialog.addEventListener("close", () => { dialog.className = ""; });
 
 async function api(path, options = {}) {
@@ -386,7 +388,7 @@ function bindViewEvents() {
 async function handleAction(event) {
   const { action, id } = event.currentTarget.dataset;
   if (action === "reload-view") return render();
-  if (action === "approve") approveJob(id);
+  if (action === "approve") return await approveJob(id);
   if (action === "skip") updateJob(id, "skipped", "Job skipped and removed from your queue");
   if (action === "save") updateJob(id, "shortlisted", "Saved for later. This role is retained for 30 days.");
   if (action === "show-matches") { state.reviewFilter = event.currentTarget.dataset.filter || "matches"; saveState(); render(); }
@@ -635,16 +637,33 @@ async function exportData() {
 async function approveJob(id) {
   const job = state.jobs.find(item => String(item.id) === String(id));
   if (!job) return;
+  const approvalKey = String(id);
+  if (pendingApprovals.has(approvalKey)) return toast("This application pack is already being prepared.", { title: "Preparation in progress" });
+  pendingApprovals.add(approvalKey);
+  operationOverlay.querySelector("#operation-title").textContent = `Preparing ${job.company} application`;
+  operationOverlay.querySelector("#operation-detail").textContent = "Checking the JD, tailoring your verified resume and saving the application history.";
+  operationOverlay.hidden = false;
   if (remoteEnabled) {
     try {
       await api(`/jobs/${encodeURIComponent(id)}/decision`, { method: "POST", body: JSON.stringify({ decision: "approved" }) });
       await connectBackend();
       return toast(`${job.company} approved. A truthful application draft was prepared.`);
-    } catch (error) { return toast(error.message); }
+    } catch (error) {
+      if (/unique constraint|tailored_resumes\.job_id/i.test(error.message)) {
+        await connectBackend();
+        return toast("The application pack was already created and is available in Pipeline.", { title: "Application ready" });
+      }
+      return toast(error.message, { title: "Preparation failed", tone: "error" });
+    } finally {
+      pendingApprovals.delete(approvalKey);
+      operationOverlay.hidden = true;
+    }
   }
   job.status = "approved";
   state.applications.unshift({ id: Date.now(), title: job.title, company: job.company, stage: "applied", updated: "Just now", score: job.score });
   state.activity.unshift({ text: `Application pack prepared for ${job.company}`, time: "Just now" });
+  pendingApprovals.delete(approvalKey);
+  operationOverlay.hidden = true;
   saveState(); render(); toast(`${job.company} approved. Application pack is ready.`);
 }
 

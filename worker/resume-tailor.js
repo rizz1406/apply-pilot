@@ -44,7 +44,7 @@ async function geminiJson(env, prompt, fast = false, schema = undefined) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents: [{ parts: [{ text: input }] }], generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: 0.1 } })
       });
-      if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 2) return response;
+      if (response.status === 429 || ![500, 502, 503, 504].includes(response.status) || attempt === 2) return response;
       await new Promise(resolve => setTimeout(resolve, 600 * (attempt + 1)));
     }
     return response;

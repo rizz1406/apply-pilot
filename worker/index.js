@@ -231,10 +231,10 @@ async function route(request, env) {
       if (!tailored) {
         const pack = await createTailoredPack(env, profile, job);
         const tailoredId = crypto.randomUUID();
-        await env.DB.prepare(`INSERT INTO tailored_resumes (id, job_id, profile_snapshot, jd_hash, resume_json, audit_json, keyword_coverage, match_score, latex_content, status, model)
+        await env.DB.prepare(`INSERT OR IGNORE INTO tailored_resumes (id, job_id, profile_snapshot, jd_hash, resume_json, audit_json, keyword_coverage, match_score, latex_content, status, model)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .bind(tailoredId, job.id, JSON.stringify(profile), jdHash, JSON.stringify(pack.resume), JSON.stringify(pack.audit), JSON.stringify(pack.coverage), pack.resume.matchScore, pack.latex, pack.status, pack.model).run();
-        tailored = await env.DB.prepare("SELECT * FROM tailored_resumes WHERE id = ?").bind(tailoredId).first();
+        tailored = await env.DB.prepare("SELECT * FROM tailored_resumes WHERE job_id = ? AND jd_hash = ?").bind(job.id, jdHash).first();
       }
       const draft = await prepareApplication(env, job, settings);
       const { results: variants } = await env.DB.prepare("SELECT * FROM resume_variants ORDER BY is_default DESC, id").all();
