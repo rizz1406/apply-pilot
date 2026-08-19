@@ -123,7 +123,7 @@ export async function scanSources(env) {
         const id = `${job.provider}:${job.externalId}`;
         // Internship hunting is intentionally broader: retain lower-fit roles in the
         // configured location so the user can prioritize pay and transferable skills.
-        const internshipEligible = internship && match.score >= 40 && !match.reasons.includes("Location conflicts with the no-relocation preference");
+        const internshipEligible = internship && match.score >= 25 && !match.reasons.includes("Location conflicts with the no-relocation preference");
         if (!match.eligible && !internshipEligible) {
           await env.DB.prepare("UPDATE jobs SET status = 'skipped' WHERE id = ? AND status IN ('new','shortlisted')").bind(id).run();
           const reason = match.reasons[0] || "";
