@@ -15,6 +15,7 @@ test("renders the Review queue without a runtime error", async () => {
     addEventListener() {},
     append() {},
     close() {},
+    remove() {},
     querySelector() { return makeElement(); },
     querySelectorAll() { return []; }
   });
@@ -35,10 +36,13 @@ test("renders the Review queue without a runtime error", async () => {
       querySelector: element
     },
     fetch: async () => { throw new Error("offline test"); },
-    localStorage: { getItem: () => null, setItem() {} },
+    localStorage: { getItem: key => key === "applypilot-state-v2" ? JSON.stringify({
+      jobs: [{ id: "real-job", title: "Data Analyst", company: "Real Company", initials: "RC", color: "#2457d6", location: "India", mode: "Remote", salary: "Salary not listed", source: "Greenhouse", score: 82, status: "new", opportunityType: "full_time", reasons: ["Preferred skills found: SQL", "Experience requirement fits"] }],
+      applications: [], outreach: [], activity: []
+    }) : null, setItem() {} },
     location: { port: "" },
     navigator: {},
-    setTimeout,
+    setTimeout() {},
     structuredClone,
     window: { addEventListener() {}, scrollTo() {} }
   };
@@ -46,7 +50,7 @@ test("renders the Review queue without a runtime error", async () => {
   vm.runInNewContext(source, context);
   await Promise.resolve();
 
-  assert.match(element("#app").innerHTML, /Review 4 new opportunities/);
+  assert.match(element("#app").innerHTML, /Review 1 new opportunity/);
   assert.doesNotMatch(element("#app").innerHTML, /This view could not load/);
   assert.equal(errors.length, 0);
 });

@@ -12,12 +12,16 @@ const json = (data, status = 200, extra = {}) => new Response(JSON.stringify(dat
   headers: { "Content-Type": "application/json; charset=utf-8", ...extra }
 });
 
-const cors = env => ({
-  "Access-Control-Allow-Origin": env.APP_ORIGIN || "*",
+const cors = (env, request) => {
+  const requestOrigin = request?.headers.get("Origin") || "";
+  const isApplyPilotOrigin = requestOrigin === env.APP_ORIGIN || /^https:\/\/[a-z0-9-]+\.applypilot\.pages\.dev$/i.test(requestOrigin);
+  return {
+  "Access-Control-Allow-Origin": isApplyPilotOrigin ? requestOrigin : (env.APP_ORIGIN || "*"),
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Vary": "Origin"
-});
+  };
+};
 
 function authorized(request, env) {
   if (env.DEMO_MODE === "true" && !env.ADMIN_TOKEN) return true;
@@ -394,18 +398,18 @@ async function scheduled(env, controller) {
 
 export default {
   async fetch(request, env) {
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(env) });
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(env, request) });
     try {
       const response = await route(request, env);
       const headers = new Headers(response.headers);
-      Object.entries(cors(env)).forEach(([key, value]) => headers.set(key, value));
+      Object.entries(cors(env, request)).forEach(([key, value]) => headers.set(key, value));
       headers.set("X-Content-Type-Options", "nosniff");
       headers.set("Referrer-Policy", "no-referrer");
       headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
       headers.set("Cache-Control", "no-store");
       return new Response(response.body, { status: response.status, headers });
     } catch (error) {
-      return json({ error: error.message || "Unexpected error" }, 500, cors(env));
+      return json({ error: error.message || "Unexpected error" }, 500, cors(env, request));
     }
   },
   async scheduled(controller, env, ctx) {

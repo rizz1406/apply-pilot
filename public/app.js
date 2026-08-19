@@ -1,4 +1,4 @@
-const STORAGE_KEY = "applypilot-demo-state-v1";
+const STORAGE_KEY = "applypilot-state-v2";
 const API_TOKEN_KEY = "applypilot-api-token";
 const API_BASE = location.port === "4173" ? "http://127.0.0.1:8787/api" : "https://applypilot-api.rizwanmirza95551.workers.dev/api";
 let remoteEnabled = false;
@@ -33,29 +33,10 @@ const seedState = {
     followups: true,
     telegram: false
   },
-  jobs: [
-    { id: 1, title: "Data Analyst - Digital Analytics", company: "Northstar Media", initials: "NM", color: "#2457d6", location: "Hyderabad", mode: "Hybrid", salary: "Salary not listed", source: "Greenhouse", score: 94, age: "18 min ago", status: "new", reasons: ["BigQuery, GA4, and SQL are core requirements", "Digital media experience matches", "Seniority aligns with 1+ year experience"] },
-    { id: 2, title: "Business Intelligence Analyst", company: "Linearworks", initials: "LW", color: "#6d4ec7", location: "Remote - India", mode: "Remote", salary: "Salary not listed", source: "Lever", score: 90, age: "1 hr ago", status: "new", reasons: ["Power BI and SQL overlap strongly", "ETL ownership is relevant", "Remote India matches your location"] },
-    { id: 3, title: "AdTech Data Analyst", company: "Harbor Digital", initials: "HD", color: "#0f766e", location: "Bengaluru", mode: "Hybrid", salary: "Salary not listed", source: "Career page", score: 88, age: "3 hr ago", status: "new", reasons: ["GAM and ad-performance experience are uncommon direct matches", "BigQuery reporting is required", "Location needs your review"] },
-    { id: 4, title: "Junior Analytics Engineer", company: "Mosaic Labs", initials: "ML", color: "#b45309", location: "Remote - India", mode: "Remote", salary: "Salary not listed", source: "Gmail alert", score: 79, age: "Yesterday", status: "new", reasons: ["Bronze/Silver/Gold SQL experience is relevant", "ETL and data QA match", "Data modeling depth needs review"] }
-  ],
-  applications: [
-    { id: 11, title: "Reporting Analyst", company: "Brightwell", stage: "applied", updated: "Today", score: 91 },
-    { id: 12, title: "BI Analyst", company: "Relay", stage: "outreach", updated: "Yesterday", score: 88 },
-    { id: 13, title: "Digital Analytics Analyst", company: "Archway", stage: "interview", updated: "Mon", score: 86 },
-    { id: 14, title: "Data Analyst", company: "Daybreak", stage: "closed", updated: "Aug 11", score: 81 }
-  ],
-  outreach: [
-    { id: 21, name: "Maya Chen", company: "Brightwell", role: "Reporting Analyst", status: "due", label: "Follow-up due", timing: "Today" },
-    { id: 22, name: "Jordan Lee", company: "Relay", role: "BI Analyst", status: "draft", label: "Draft ready", timing: "Review" },
-    { id: 23, name: "Priya Shah", company: "Archway", role: "Digital Analytics Analyst", status: "sent", label: "Replied", timing: "2 days ago" }
-  ],
-  activity: [
-    { text: "Interview invitation detected from Archway", time: "12 minutes ago" },
-    { text: "4 new roles passed your eligibility rules", time: "38 minutes ago" },
-    { text: "Application confirmation saved for Brightwell", time: "2 hours ago" },
-    { text: "Follow-up prepared for Maya Chen", time: "Yesterday" }
-  ],
+  jobs: [],
+  applications: [],
+  outreach: [],
+  activity: [],
   leads: [],
   sources: []
 };
@@ -164,7 +145,7 @@ async function connectBackend(quiet = true) {
     if (!quiet) toast("Connected to the cloud backend.");
   } catch (error) {
     remoteEnabled = false;
-    if (!quiet) toast(`Backend unavailable: ${error.message}`);
+    toast(`Cloud data could not load: ${error.message}`, { title: "Connection problem", tone: "error", duration: 6000 });
   }
 }
 
@@ -183,12 +164,17 @@ function saveState() {
 
 function counts() {
   return {
-    today: state.jobs.filter(job => job.status === "new" && job.opportunityType !== "internship").length,
+    today: state.jobs.filter(isReviewMatch).length,
     internships: state.jobs.filter(job => job.status === "new" && job.opportunityType === "internship").length,
     pipeline: state.applications.filter(item => item.stage !== "closed").length,
     outreach: state.outreach.filter(item => item.status !== "sent").length,
     settings: ""
   };
+}
+
+function isReviewMatch(job) {
+  const minimumScore = Number(state.settings.minimumMatchScore || 50);
+  return job.status === "new" && job.opportunityType !== "internship" && Number(job.score || 0) >= minimumScore;
 }
 
 function renderNav(activeView) {
@@ -237,7 +223,7 @@ function render() {
 }
 
 function renderToday() {
-  const available = state.jobs.filter(job => job.status === "new" && job.opportunityType !== "internship");
+  const available = state.jobs.filter(isReviewMatch);
   const saved = state.jobs.filter(job => job.status === "shortlisted" && job.opportunityType !== "internship");
   const reviewFilter = state.reviewFilter || "matches";
   const visible = reviewFilter === "saved" ? saved : reviewFilter === "strong" ? available.filter(job => job.score >= 75) : available;
