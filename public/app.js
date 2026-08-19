@@ -104,7 +104,7 @@ function mapRemote(data) {
     source: job.provider, score: job.score, age: job.discovered_at, status: job.status, opportunityType: job.opportunity_type || "full_time",
     reasons: parseJson(job.score_reasons, []), riskFlags: parseJson(job.risk_flags, []), applyUrl: job.apply_url, description: job.description
   }));
-  const stageMap = { approved: "prepared", prepared: "prepared", applied: "applied", outreach: "outreach", interview: "interview", offer: "interview", rejected: "closed", withdrawn: "closed" };
+  const stageMap = { approved: "approved", prepared: "prepared", applied: "applied", outreach: "outreach", interview: "interview", offer: "interview", rejected: "closed", withdrawn: "closed" };
   state.applications = data.applications.map(item => ({ id: item.id, title: item.title, company: item.company, stage: stageMap[item.stage] || "prepared", updated: item.updated_at, submittedAt: item.submitted_at, score: item.score, applyUrl: item.apply_url, rawStage: item.stage,
     tailoredResumeId: item.tailored_resume_id, tailoredResume: parseJson(item.tailored_resume_json, null), resumeAudit: parseJson(item.resume_audit_json, null), keywordCoverage: parseJson(item.keyword_coverage, null), tailoredScore: item.tailored_match_score, latex: item.latex_content, tailoredStatus: item.tailored_status, coverLetter: item.cover_letter }));
   state.outreach = data.outreach.map(item => ({
@@ -298,7 +298,7 @@ function internshipCard(job) {
 
 function renderPipeline() {
   const stages = [
-    { id: "prepared", label: "Prepared" }, { id: "applied", label: "Applied" }, { id: "outreach", label: "Outreach" },
+    { id: "prepared", label: "Prepared" }, { id: "approved", label: "Ready to apply" }, { id: "applied", label: "Applied" }, { id: "outreach", label: "Outreach" },
     { id: "interview", label: "Interviewing" }, { id: "closed", label: "Closed" }
   ];
   const analytics = state.analytics || {};
@@ -408,33 +408,72 @@ function showApplicationPack(id) {
     <div class="pack-grid"><section><h3>ATS coverage</h3><strong class="pack-score">${coverage.pct ?? "-"}%</strong><p class="job-company">Matched: ${escapeHtml((coverage.matched || []).join(", ") || "No tracked keywords")}</p><p class="job-company">Missing: ${escapeHtml((coverage.missing || []).join(", ") || "None")}</p></section><section><h3>Truth audit</h3><strong>${escapeHtml(audit.verdict || "review")}</strong><p class="job-company">${Number(audit.autoCorrected || 0)} grounded corrections applied</p><p class="job-company">${escapeHtml((audit.qualityIssues || []).join(" ") || "No quality issues detected")}</p></section></div>
     <div class="match-reasons"><h3>Tailored summary</h3><p>${escapeHtml(item.tailoredResume.summary)}</p><h3>Prioritized skills</h3><p>${escapeHtml(item.tailoredResume.skills)}</p></div>
     <div class="match-reasons"><h3>Cover letter</h3><p class="prewrap">${escapeHtml(item.coverLetter || "Not generated")}</p></div>
-    <div class="dialog-actions"><button class="secondary-button" id="download-json">Resume JSON</button><button class="secondary-button" id="download-tex">LaTeX</button><button class="secondary-button" id="download-pdf">Save as PDF</button><button class="secondary-button" id="open-application">Open application</button><button class="secondary-button" id="mark-applied">Mark applied</button><button class="primary-button" id="approve-tailored">Approve resume</button></div>
+    <div class="dialog-actions"><button class="secondary-button" id="view-resume">View resume</button><button class="secondary-button" id="download-json">Resume JSON</button><button class="secondary-button" id="download-tex">LaTeX</button><button class="secondary-button" id="download-pdf">Download PDF</button><button class="secondary-button" id="open-application">Open application</button><button class="secondary-button" id="mark-applied">Mark applied</button><button class="primary-button" id="approve-tailored">Approve resume</button></div>
     <button class="text-button pack-followup" id="prepare-interview">Create interview workspace</button>
     <button class="text-button pack-followup" id="create-followup">Create recruiter follow-up</button></div>`;
   dialog.showModal();
   dialog.querySelector(".dialog-close").onclick = () => dialog.close();
+  dialog.querySelector("#view-resume").onclick = () => showResumePreview(item);
   dialog.querySelector("#download-json").onclick = () => downloadText(`${item.company}-${item.title}.json`.replace(/[^a-z0-9.-]+/gi, "_"), JSON.stringify(item.tailoredResume, null, 2), "application/json");
   dialog.querySelector("#download-tex").onclick = () => downloadText(`${item.company}-${item.title}.tex`.replace(/[^a-z0-9.-]+/gi, "_"), item.latex || "", "application/x-latex");
-  dialog.querySelector("#download-pdf").onclick = () => printResumePdf(item);
+  dialog.querySelector("#download-pdf").onclick = () => downloadResumePdf(item);
   dialog.querySelector("#open-application").onclick = () => window.open(item.applyUrl, "_blank", "noopener,noreferrer");
   dialog.querySelector("#mark-applied").onclick = async () => {
     try { await api(`/applications/${encodeURIComponent(item.id)}/stage`, { method: "PUT", body: JSON.stringify({ stage: "applied" }) }); dialog.close(); await connectBackend(); toast("Application marked as applied."); }
     catch (error) { toast(error.message); }
   };
   dialog.querySelector("#approve-tailored").onclick = async () => {
-    try { await api(`/tailored-resumes/${encodeURIComponent(item.tailoredResumeId)}/approve`, { method: "POST" }); dialog.close(); await connectBackend(); toast("Job-specific resume approved."); }
+    try { await api(`/tailored-resumes/${encodeURIComponent(item.tailoredResumeId)}/approve`, { method: "POST" }); dialog.close(); await connectBackend(); toast("Resume approved. Application moved to Ready to apply."); }
     catch (error) { toast(error.message); }
   };
   dialog.querySelector("#create-followup").onclick = () => showFollowupComposer(item);
   dialog.querySelector("#prepare-interview").onclick = () => createInterviewWorkspace(item);
 }
 
-function printResumePdf(item) {
+function resumeLines(resume, item) {
+  const wrap = (value, width = 88) => String(value || "").replace(/[^\x20-\x7E]/g, " ").split(/\s+/).reduce((lines, word) => {
+    const last = lines.at(-1) || "";
+    if (!last || `${last} ${word}`.length <= width) lines[lines.length - 1] = `${last}${last ? " " : ""}${word}`;
+    else lines.push(word);
+    return lines;
+  }, [""]).filter(Boolean);
+  const lines = [resume.name || state.profile.fullName, resume.title || item.title, `${resume.email || ""} ${resume.phone || ""}`.trim(), resume.location || "", "", "SUMMARY", ...wrap(resume.summary), "", "SKILLS", ...wrap(resume.skills)];
+  for (const entry of resume.experienceStructured || []) lines.push("", "EXPERIENCE", `${entry.role} | ${entry.company} | ${entry.dates}`, ...(entry.bullets || []).flatMap(bullet => wrap(`- ${bullet}`)));
+  for (const project of resume.projectsStructured || []) lines.push("", "PROJECTS", `${project.name} | ${project.tech}`, ...(project.bullets || []).flatMap(bullet => wrap(`- ${bullet}`)));
+  return lines;
+}
+
+function downloadResumePdf(item) {
+  const escapePdf = value => String(value).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  const pages = [];
+  const lines = resumeLines(item.tailoredResume, item);
+  for (let index = 0; index < lines.length; index += 48) pages.push(lines.slice(index, index + 48));
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
+  const pageIds = pages.map((_, index) => 4 + index * 2);
+  objects[1] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(" ")}] /Count ${pages.length} >>`;
+  pages.forEach((page, index) => {
+    const pageId = 4 + index * 2;
+    const streamId = pageId + 1;
+    const stream = `BT /F1 10 Tf 52 748 Td ${page.map(line => `(${escapePdf(line)}) Tj 0 -14 Td`).join("\n")} ET`;
+    objects[pageId - 1] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${streamId} 0 R >>`;
+    objects[streamId - 1] = `<< /Length ${new TextEncoder().encode(stream).length} >>\nstream\n${stream}\nendstream`;
+  });
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => { offsets[index + 1] = new TextEncoder().encode(pdf).length; pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; });
+  const xref = new TextEncoder().encode(pdf).length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map(offset => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  downloadText(`${item.company}-${item.title}.pdf`.replace(/[^a-z0-9.-]+/gi, "_"), pdf, "application/pdf");
+}
+
+function showResumePreview(item) {
   const resume = item.tailoredResume;
-  const popup = window.open("", "_blank", "noopener,noreferrer");
-  if (!popup) return toast("Allow popups to save the PDF.");
-  popup.document.write(`<!doctype html><title>${escapeHtml(item.title)} resume</title><style>body{font-family:Arial,sans-serif;max-width:760px;margin:36px auto;line-height:1.45;color:#111}h1{margin-bottom:0}h2{border-bottom:1px solid #bbb;padding-bottom:4px;margin-top:26px}p{white-space:pre-wrap}</style><h1>${escapeHtml(resume.name || state.profile.fullName)}</h1><p>${escapeHtml(resume.title || item.title)}</p><h2>Summary</h2><p>${escapeHtml(resume.summary || "")}</p><h2>Skills</h2><p>${escapeHtml(resume.skills || "")}</p><h2>Experience</h2><p>${escapeHtml(JSON.stringify(resume.experience || [], null, 2))}</p>`);
-  popup.document.close(); popup.focus(); setTimeout(() => popup.print(), 250);
+  const role = entry => `<section><h3>${escapeHtml(entry.role)} <small>${escapeHtml(entry.dates)}</small></h3><p>${escapeHtml(entry.company)} | ${escapeHtml(entry.location)}</p><ul>${(entry.bullets || []).map(bullet => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul></section>`;
+  const project = entry => `<section><h3>${escapeHtml(entry.name)}</h3><p>${escapeHtml(entry.tech)}</p><ul>${(entry.bullets || []).map(bullet => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul></section>`;
+  dialog.innerHTML = `<div class="dialog-content resume-preview"><div class="dialog-header"><div><span class="badge new">TAILORED RESUME</span><h2>${escapeHtml(resume.name || state.profile.fullName)}</h2><p class="job-company">${escapeHtml(resume.title || item.title)}</p></div><button class="dialog-close" aria-label="Close">x</button></div><p class="job-company">${escapeHtml([resume.email, resume.phone, resume.location].filter(Boolean).join(" | "))}</p><section><h3>Summary</h3><p>${escapeHtml(resume.summary)}</p></section><section><h3>Skills</h3><p>${escapeHtml(resume.skills)}</p></section><h3>Experience</h3>${(resume.experienceStructured || []).map(role).join("") || "<p>No experience entries.</p>"}<h3>Projects</h3>${(resume.projectsStructured || []).map(project).join("") || "<p>No project entries.</p>"}<div class="dialog-actions"><button class="secondary-button" id="back-to-pack">Back</button><button class="primary-button" id="preview-download-pdf">Download PDF</button></div></div>`;
+  dialog.querySelector(".dialog-close").onclick = () => dialog.close();
+  dialog.querySelector("#back-to-pack").onclick = () => showApplicationPack(item.id);
+  dialog.querySelector("#preview-download-pdf").onclick = () => downloadResumePdf(item);
 }
 
 async function createInterviewWorkspace(application) {

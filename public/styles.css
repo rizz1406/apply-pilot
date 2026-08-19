@@ -266,7 +266,7 @@ main { margin-left: var(--sidebar); min-height: 100vh; }
 .alert-list button { flex: 0 0 auto; }
 
 .pipeline { overflow-x: auto; padding-bottom: 10px; }
-.pipeline-grid { min-width: 1040px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.pipeline-grid { min-width: 1240px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
 .pipeline-column { min-height: 430px; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: #eef1ef; }
 .pipeline-header { margin-bottom: 12px; display: flex; justify-content: space-between; font-size: 12px; font-weight: 750; }
 .pipeline-card { margin-bottom: 9px; padding: 13px; border: 1px solid #d8ded8; border-radius: 6px; background: white; }
@@ -313,6 +313,13 @@ main { margin-left: var(--sidebar); min-height: 100vh; }
 .pack-grid h3 { margin: 0 0 8px; font-size: 13px; }
 .pack-score { color: var(--green); font-size: 24px; }
 .prewrap { white-space: pre-wrap; }
+.resume-preview { line-height: 1.5; }
+.resume-preview > section, .resume-preview > section section { margin: 18px 0; }
+.resume-preview h3 { margin: 0 0 5px; font-size: 13px; }
+.resume-preview h3 small { float: right; color: var(--muted); font-size: 10px; font-weight: 500; }
+.resume-preview p { margin: 4px 0; font-size: 12px; }
+.resume-preview ul { margin: 7px 0 0; padding-left: 18px; font-size: 12px; }
+.resume-preview li { margin: 5px 0; }
 .toggle-row { min-height: 51px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); font-size: 12px; }
 .switch { width: 40px; height: 22px; padding: 3px; border: 0; border-radius: 11px; background: #aeb8b0; }
 .switch::before { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: white; transition: transform .15s; }

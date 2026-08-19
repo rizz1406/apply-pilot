@@ -278,6 +278,7 @@ async function route(request, env) {
   if (method === "POST" && tailoredApproval) {
     const result = await env.DB.prepare("UPDATE tailored_resumes SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(tailoredApproval.id).run();
     if (!(result.meta.changes || 0)) return json({ error: "Tailored resume not found" }, 404);
+    await env.DB.prepare("UPDATE applications SET stage = 'approved', updated_at = CURRENT_TIMESTAMP WHERE tailored_resume_id = ? AND stage = 'prepared'").bind(tailoredApproval.id).run();
     await activity(env, "tailored_resume_approved", "Job-specific resume approved", "tailored_resume", tailoredApproval.id);
     return json({ ok: true });
   }
