@@ -1,13 +1,30 @@
-\NeedsTeXFormat{LaTeX2e}
-\ProvidesClass{resume}[2026/08/19 ApplyPilot resume template]
-\LoadClass[10pt]{article}
-\usepackage{enumitem}
-\usepackage{titlesec}
-\usepackage{tabularx}
-\pagenumbering{gobble}
-\setlength{\parindent}{0pt}
-\setlength{\parskip}{0pt}
-\newcommand{\name}[1]{\begin{center}\LARGE\bfseries #1\end{center}}
-\newcommand{\address}[1]{\begin{center}\small #1\end{center}}
-\newenvironment{rSection}[1]{\vspace{4pt}\textbf{\MakeUppercase{#1}}\par\vspace{1pt}\hrule\vspace{3pt}}{\vspace{2pt}}
-\renewenvironment{itemize}{\begin{itemize}[leftmargin=14pt,itemsep=-2pt,topsep=2pt]}{\end{itemize}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Medium Length Professional CV - RESUME CLASS FILE
+% Original template: LaTeXTemplates.com, Trey Hunner
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\ProvidesClass{resume}[2010/07/10 v0.9 Resume class]
+\LoadClass[11pt,letterpaper]{article}
+\usepackage[parfill]{parskip}
+\usepackage{array}
+\usepackage{ifthen}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,filecolor=magenta,urlcolor=blue}
+\pagestyle{empty}
+\def \name#1{\def\@name{#1}}
+\def \@name {}
+\def \addressSep {$\diamond$}
+\let \@addressone \relax
+\let \@addresstwo \relax
+\let \@addressthree \relax
+\def \address #1{\@ifundefined{@addresstwo}{\def \@addresstwo {#1}}{\@ifundefined{@addressthree}{\def \@addressthree {#1}}{\def \@addressone {#1}}}}
+\def \printaddress #1{\begingroup\def \\ {\addressSep\ }\centerline{#1}\endgroup\par\addressskip}
+\def \printname {\begingroup\hfil{\MakeUppercase{\namesize\bf \@name}}\hfil\nameskip\break\endgroup}
+\let\ori@document=\document
+\renewcommand{\document}{\ori@document\printname\@ifundefined{@addressone}{}{\printaddress{\@addressone}}\@ifundefined{@addresstwo}{}{\printaddress{\@addresstwo}}\@ifundefined{@addressthree}{}{\printaddress{\@addressthree}}}
+\newenvironment{rSection}[1]{\sectionskip\MakeUppercase{{\bf #1}}\sectionlineskip\hrule\begin{list}{}{\setlength{\leftmargin}{0em}}\item[]}{\end{list}}
+\newenvironment{rSubsection}[4]{{\bf #1} \hfill {#2}\ifthenelse{\equal{#3}{}}{}{\\{\em #3} \hfill {\em #4}}\smallskip\begin{list}{$\cdot$}{\leftmargin=0em}\itemsep -0.5em \vspace{-0.5em}}{\end{list}\vspace{0.5em}}
+\def\namesize{\LARGE}
+\def\addressskip{\smallskip}
+\def\sectionlineskip{\medskip}
+\def\nameskip{\medskip}
+\def\sectionskip{\medskip}

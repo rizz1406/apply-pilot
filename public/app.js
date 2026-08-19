@@ -559,8 +559,8 @@ function buildAtsLatex(resume, item) {
   const lines = [
     "\\documentclass{resume}", "\\usepackage[left=0.4in,top=0.4in,right=0.4in,bottom=0.4in]{geometry}", "\\usepackage{hyperref}", "\\hypersetup{colorlinks=true,urlcolor=blue}",
     `\\name{${esc(resume.name || state.profile.fullName)}}`,
-    `\\address{${esc(resume.phone || "")} \\ ${esc(resume.location || "Hyderabad, Telangana")}}`,
-    `\\address{\\href{mailto:${esc(resume.email || "")}}{${esc(resume.email || "")}} \\ \\href{${esc(resume.linkedin || "")}}{LinkedIn} \\ \\href{${esc(resume.website || "")}}{Portfolio Website}}`,
+    `\\address{${esc(resume.phone || "")} \\\\ ${esc(resume.location || "Hyderabad, Telangana")}}`,
+    `\\address{\\href{mailto:${esc(resume.email || "")}}{${esc(resume.email || "")}} \\\\ \\href{${esc(resume.linkedin || "")}}{LinkedIn} \\\\ \\href{${esc(resume.website || "")}}{Portfolio Website}}`,
     `\\address{${esc(resume.title || item.title)}}`, "\\begin{document}", "\\vspace{-10pt}", "\\begin{rSection}{Summary}", esc(resume.summary), "\\end{rSection}",
     "\\vspace{-8pt}", "\\begin{rSection}{Skills}", esc(resume.skills), "\\end{rSection}", "\\vspace{-8pt}", "\\begin{rSection}{Professional Experience}"
   ];
