@@ -30,7 +30,8 @@ export function scoreJob(job, settings) {
     return { score: 0, eligible: false, reasons: ["Published salary is below the configured minimum"] };
   }
   const experienceMinimum = extractExperienceMinimum(job.description);
-  if (settings.candidate_years && experienceMinimum && experienceMinimum > Number(settings.candidate_years) + 1) {
+  const experienceTolerance = Number(settings.experience_tolerance_years ?? 1);
+  if (settings.candidate_years && experienceMinimum && experienceMinimum > Number(settings.candidate_years) + experienceTolerance) {
     return { score: 0, eligible: false, reasons: [`Requires at least ${experienceMinimum} years of experience`] };
   }
 

@@ -142,6 +142,7 @@ function mapRemote(data) {
       ,tailoringMinimumScore: data.settings.tailoring_minimum_score || 75
       ,mustHaveSkills: data.settings.must_have_skills || ""
       ,internshipTitles: data.settings.internship_titles || "Data Analyst Intern,Business Intelligence Intern,Data Engineering Intern,Analytics Intern"
+      ,experienceToleranceYears: data.settings.experience_tolerance_years ?? 1
     };
   }
 }
@@ -330,6 +331,7 @@ function renderSettings() {
       <div class="field"><label for="limit">Maximum applications per day</label><input id="limit" type="number" min="1" max="25" value="${s.dailyLimit}"></div>
       <div class="field"><label for="active-from">Activate search on</label><input id="active-from" type="date" value="${s.activeFrom || ""}"><small>Leave empty to scan now.</small></div>
       <div class="field"><label for="freshness">Maximum posting age (hours)</label><input id="freshness" type="number" min="1" max="720" value="${s.freshnessHours || 72}"></div>
+      <div class="field"><label for="experience-tolerance">Experience gap allowed (years)</label><input id="experience-tolerance" type="number" min="0" max="3" step="0.5" value="${s.experienceToleranceYears ?? 1}"><small>Allows promising roles where the stated experience requirement is above your current experience.</small></div>
       <div class="field"><label for="match-score">Minimum match score</label><input id="match-score" type="number" min="50" max="95" value="${s.minimumMatchScore || 65}"></div>
       <div class="field"><label for="tailoring-score">Resume tailoring gate</label><input id="tailoring-score" type="number" min="65" max="95" value="${s.tailoringMinimumScore || 75}"><small>Only roles at or above this score can create a resume pack.</small></div>
       <div class="field"><label for="must-have-skills">Required skills for tailoring</label><input id="must-have-skills" value="${escapeHtml(s.mustHaveSkills || "")}" placeholder="SQL, BigQuery"><small>Every listed skill must appear in the full JD.</small></div>
@@ -678,6 +680,7 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
     state.settings.requiredSkills = document.querySelector("#skills").value.trim();
     state.settings.activeFrom = document.querySelector("#active-from").value;
     state.settings.freshnessHours = Number(document.querySelector("#freshness").value) || 72;
+    state.settings.experienceToleranceYears = Number(document.querySelector("#experience-tolerance").value) || 0;
     state.settings.minimumMatchScore = Number(document.querySelector("#match-score").value) || 65;
     state.settings.tailoringMinimumScore = Number(document.querySelector("#tailoring-score").value) || 75;
     state.settings.mustHaveSkills = document.querySelector("#must-have-skills").value.trim();
@@ -702,6 +705,7 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
           ,tailoring_minimum_score: state.settings.tailoringMinimumScore
           ,must_have_skills: state.settings.mustHaveSkills
           ,internship_titles: state.settings.internshipTitles
+          ,experience_tolerance_years: state.settings.experienceToleranceYears
         }) });
       } catch (error) { return toast(error.message); }
     }
