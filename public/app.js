@@ -71,6 +71,7 @@ const navItems = [
 let state = loadState();
 const app = document.querySelector("#app");
 const dialog = document.querySelector("#detail-dialog");
+dialog.addEventListener("close", () => { dialog.className = ""; });
 
 async function api(path, options = {}) {
   const token = localStorage.getItem(API_TOKEN_KEY);
@@ -402,6 +403,7 @@ function showApplicationPack(id) {
   if (!item?.tailoredResume) return toast("Application pack is not available.");
   const audit = item.resumeAudit || {};
   const coverage = item.keywordCoverage || {};
+  dialog.className = "pack-modal";
   dialog.innerHTML = `<div class="dialog-content pack-dialog"><div class="dialog-header"><div><span class="badge new">${item.tailoredScore || 0}% TAILORED</span><h2>${escapeHtml(item.title)}</h2><p class="job-company">${escapeHtml(item.company)} · ${escapeHtml(item.tailoredStatus || "review")}</p></div><button class="dialog-close" aria-label="Close">x</button></div>
     <div class="pack-grid"><section><h3>ATS coverage</h3><strong class="pack-score">${coverage.pct ?? "-"}%</strong><p class="job-company">Matched: ${escapeHtml((coverage.matched || []).join(", ") || "No tracked keywords")}</p><p class="job-company">Missing: ${escapeHtml((coverage.missing || []).join(", ") || "None")}</p></section><section><h3>Truth audit</h3><strong>${escapeHtml(audit.verdict || "review")}</strong><p class="job-company">${Number(audit.autoCorrected || 0)} grounded corrections applied</p><p class="job-company">${escapeHtml((audit.qualityIssues || []).join(" ") || "No quality issues detected")}</p></section></div>
     <div class="match-reasons"><h3>Tailored summary</h3><p>${escapeHtml(item.tailoredResume.summary)}</p><h3>Prioritized skills</h3><p>${escapeHtml(item.tailoredResume.skills)}</p></div>

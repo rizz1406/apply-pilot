@@ -307,7 +307,7 @@ main { margin-left: var(--sidebar); min-height: 100vh; }
 .field small { color: var(--muted); font-size: 10px; }
 .field input, .field select { width: 100%; min-height: 42px; padding: 0 11px; border: 1px solid var(--line); border-radius: 5px; background: white; color: var(--ink); }
 .field textarea { width: 100%; padding: 10px 11px; resize: vertical; border: 1px solid var(--line); border-radius: 5px; background: white; color: var(--ink); line-height: 1.45; }
-.pack-dialog { width: min(760px, calc(100vw - 32px)); }
+.pack-dialog { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 .pack-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
 .pack-grid section { padding: 14px; border: 1px solid var(--line); border-radius: 7px; }
 .pack-grid h3 { margin: 0 0 8px; font-size: 13px; }
@@ -323,16 +323,19 @@ main { margin-left: var(--sidebar); min-height: 100vh; }
 .empty-state h2 { margin: 0; font-size: 17px; }
 .empty-state p { max-width: 420px; margin: 8px auto 18px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 
-dialog { width: min(560px, calc(100vw - 20px)); max-width: calc(100vw - 20px); max-height: 88vh; box-sizing: border-box; overflow-x: hidden; padding: 0; border: 0; border-radius: 8px; color: var(--ink); box-shadow: 0 24px 80px rgba(18, 31, 22, .25); }
+dialog { width: min(560px, calc(100vw - 20px)); max-width: calc(100vw - 20px); max-height: 88vh; box-sizing: border-box; overflow: hidden auto; padding: 0; border: 0; border-radius: 8px; color: var(--ink); box-shadow: 0 24px 80px rgba(18, 31, 22, .25); }
+dialog.pack-modal { width: min(760px, calc(100vw - 20px)); max-width: calc(100vw - 20px); }
 dialog::backdrop { background: rgba(13, 23, 16, .5); backdrop-filter: blur(3px); }
-.dialog-content { padding: 22px; }
+.dialog-content { width: 100%; min-width: 0; box-sizing: border-box; padding: 22px; }
 .dialog-header { display: flex; justify-content: space-between; gap: 20px; }
 .dialog-header h2 { margin: 0; font-size: 19px; }
 .dialog-close { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 6px; background: white; font-size: 20px; }
 .match-reasons { margin: 20px 0; padding: 14px; background: var(--surface-alt); border-radius: 6px; }
 .match-reasons h3 { margin: 0 0 8px; font-size: 12px; }
 .match-reasons ul { margin: 0; padding-left: 18px; color: #465149; font-size: 12px; line-height: 1.7; }
-.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.dialog-actions button { min-width: 0; white-space: normal; }
+.pack-modal .dialog-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .toast-region { position: fixed; right: 20px; bottom: 20px; z-index: 20; display: grid; gap: 8px; }
 .toast { width: min(340px, calc(100vw - 32px)); padding: 13px 15px; border-radius: 6px; background: #17271c; color: white; font-size: 12px; box-shadow: var(--shadow); animation: toast-in .2s ease-out; }
@@ -376,7 +379,7 @@ dialog::backdrop { background: rgba(13, 23, 16, .5); backdrop-filter: blur(3px);
   .settings-grid { grid-template-columns: 1fr; }
   .analytics-grid { grid-template-columns: 1fr; }
   .pack-grid { grid-template-columns: 1fr; }
-  .pack-dialog .dialog-actions { flex-wrap: wrap; }
+  .pack-modal .dialog-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .outreach-wrap { overflow-x: auto; }
   .outreach-table { min-width: 650px; }
   .mobile-nav {
