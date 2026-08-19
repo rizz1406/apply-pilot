@@ -139,11 +139,13 @@ export async function scanSources(env) {
         }
       }
       const trackedQuery = source.source_table === "sources"
-        ? env.DB.prepare("SELECT id FROM jobs WHERE source_id = ? AND status IN ('new','shortlisted')").bind(source.id)
-        : env.DB.prepare("SELECT id FROM jobs WHERE provider = ? AND company = ? AND status IN ('new','shortlisted')").bind(source.provider, source.label);
+        ? env.DB.prepare("SELECT id, published_at FROM jobs WHERE source_id = ? AND status IN ('new','shortlisted')").bind(source.id)
+        : env.DB.prepare("SELECT id, published_at FROM jobs WHERE provider = ? AND company = ? AND status IN ('new','shortlisted')").bind(source.provider, source.label);
       const { results: tracked } = await trackedQuery.all();
       for (const trackedJob of tracked) {
-        if (currentIds.has(trackedJob.id)) continue;
+        const publishedAt = trackedJob.published_at ? new Date(trackedJob.published_at).getTime() : NaN;
+        const beyondFreshness = Number.isFinite(publishedAt) && settings.freshness_hours && Date.now() - publishedAt > Number(settings.freshness_hours) * 3600000;
+        if (currentIds.has(trackedJob.id) && !beyondFreshness) continue;
         const result = await env.DB.prepare("UPDATE jobs SET status = 'expired' WHERE id = ? AND status IN ('new','shortlisted')").bind(trackedJob.id).run();
         expired += result.meta.changes || 0;
       }
