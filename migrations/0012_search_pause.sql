@@ -1,0 +1,1 @@
+ALTER TABLE settings ADD COLUMN search_paused INTEGER NOT NULL DEFAULT 0;

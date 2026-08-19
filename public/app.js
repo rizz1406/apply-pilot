@@ -144,6 +144,7 @@ function mapRemote(data) {
       ,mustHaveSkills: data.settings.must_have_skills || ""
       ,internshipTitles: data.settings.internship_titles || "Data Analyst Intern,Business Intelligence Intern,Data Engineering Intern,Analytics Intern"
       ,experienceToleranceYears: data.settings.experience_tolerance_years ?? 2
+      ,searchPaused: Boolean(data.settings.search_paused)
     };
   }
 }
@@ -210,6 +211,12 @@ function render() {
   document.querySelector(".sidebar-profile strong").textContent = state.profile.fullName;
   document.querySelector(".sidebar-profile small").textContent = state.profile.currentTitle;
   const action = document.querySelector("#demo-action");
+  const scanToggle = document.querySelector("#scan-toggle");
+  const agentStatus = document.querySelector(".agent-status span");
+  const paused = Boolean(state.settings.searchPaused);
+  scanToggle.textContent = paused ? "Resume scans" : "Pause scans";
+  scanToggle.classList.toggle("danger-button", !paused);
+  agentStatus.textContent = paused ? "Scans paused" : "10-min scan active";
   action.textContent = state.activeView === "today" || state.activeView === "internships" ? "Run job scan" : state.activeView === "settings" ? "Save changes" : "Add item";
   renderNav();
   if (state.activeView === "today") renderToday();
@@ -222,6 +229,9 @@ function render() {
 
 function renderToday() {
   const available = state.jobs.filter(job => job.status === "new" && job.opportunityType !== "internship");
+  const saved = state.jobs.filter(job => job.status === "shortlisted" && job.opportunityType !== "internship");
+  const reviewFilter = state.reviewFilter || "matches";
+  const visible = reviewFilter === "saved" ? saved : reviewFilter === "strong" ? available.filter(job => job.score >= 75) : available;
   const reviewTotal = available.length;
   const activeApps = state.applications.filter(item => item.stage !== "closed").length;
   const interviews = state.applications.filter(item => ["interview", "offer"].includes(item.rawStage || item.stage)).length;
@@ -238,16 +248,16 @@ function renderToday() {
       <div class="focus-progress"><div><span>Pending review</span><strong>${reviewTotal}</strong></div><div class="focus-progress-bar"><i style="width:${reviewPercent}%"></i></div></div>
     </section>
     <section class="summary-grid" aria-label="Job search summary">
-      ${metric("Scored matches", available.length, available.length ? "Ready to review" : "None yet")}
-      ${metric("Official sources", state.sources.filter(source => source.enabled !== 0).length, "Full JD scanning")}
-      ${metric("Active applications", activeApps, activeApps ? "Tracked in pipeline" : "None started")}
-      ${metric("Follow-ups ready", followupsReady, followupsReady ? "Approve and send" : "None waiting")}
+      ${filterMetric("New matches", available.length, "matches")}
+      ${filterMetric("Strong matches", available.filter(job => job.score >= 75).length, "strong")}
+      ${filterMetric("Saved for later", saved.length, "saved")}
+      ${metric("Applied / follow-up", `${activeApps} / ${followupsReady}`, "Pipeline and drafts")}
     </section>
     <div class="content-grid">
       <section>
-        <div class="section-heading"><div><h2>Recommended for you</h2><p>${remoteEnabled ? "Live official postings scored against your skills, target roles, location, and allowed experience gap." : "Demo records until the cloud backend is connected"}</p></div><button class="text-button" data-action="${remoteEnabled ? "scan" : "reset"}">${remoteEnabled ? "Refresh sources" : "Reset demo"}</button></div>
+        <div class="section-heading"><div><h2>${reviewFilter === "saved" ? "Saved for later" : reviewFilter === "strong" ? "Strong matches" : "New matches"}</h2><p>${reviewFilter === "saved" ? "Saved roles are held for 30 days, then removed automatically." : "Each role must pass target-title, skill, India/remote, and experience checks."}</p></div><div class="section-actions"><button class="text-button" data-action="show-matches" data-filter="matches">All</button><button class="text-button" data-action="show-matches" data-filter="strong">Strong</button><button class="text-button" data-action="show-matches" data-filter="saved">Saved</button><button class="text-button" data-action="${remoteEnabled ? "scan" : "reset"}">${remoteEnabled ? "Refresh" : "Reset demo"}</button></div></div>
         <div class="job-list">
-          ${available.length ? available.map(jobCard).join("") : `<div class="empty-state"><h2>Review queue complete</h2><p>You handled every current match. Run another scan or reset the demo to restore sample jobs.</p><button class="primary-button" data-action="scan">Run job scan</button></div>`}
+          ${visible.length ? visible.map(jobCard).join("") : `<div class="empty-state"><h2>${reviewFilter === "saved" ? "No saved roles" : "No current matches"}</h2><p>${reviewFilter === "saved" ? "Use Save for later on a role you may apply to within 30 days." : "The scanner is running, but it will not fill this list with weak full-time matches."}</p><button class="primary-button" data-action="scan">Run job scan</button></div>`}
         </div>
       </section>
       <aside class="panel activity-panel">
@@ -260,6 +270,10 @@ function renderToday() {
 
 function metric(label, value, note) {
   return `<article class="metric"><span>${label}</span><strong>${value}</strong><small>${note}</small></article>`;
+}
+
+function filterMetric(label, value, filter) {
+  return `<button class="metric metric-button" data-action="show-matches" data-filter="${filter}"><span>${label}</span><strong>${value}</strong><small>View list</small></button>`;
 }
 
 function jobCard(job) {
@@ -277,6 +291,7 @@ function jobCard(job) {
     <div class="score-block"><div class="score">${job.score}%</div><div class="score-label">MATCH</div></div>
     <div class="job-actions">
       <button class="secondary-button" data-action="skip" data-id="${job.id}">Skip</button>
+      <button class="secondary-button" data-action="save" data-id="${job.id}">Save for later</button>
       <button class="secondary-button" data-action="details" data-id="${job.id}">Review</button>
       <button class="primary-button" data-action="approve" data-id="${job.id}">Prepare application</button>
     </div>
@@ -295,8 +310,10 @@ function internshipCard(job) {
   const skills = skillPool.filter(skill => String(job.description || "").toLowerCase().includes(skill.toLowerCase())).slice(0, 4);
   const timing = job.age ? new Intl.DateTimeFormat("en", { day: "numeric", month: "short" }).format(new Date(job.age)) : "Posting date not listed";
   const pay = job.salary && job.salary !== "Salary not listed" ? job.salary : "Pay not listed";
-  const summary = `${job.title} at ${job.company}. ${skills.length ? `The JD mentions ${skills.join(", ")}.` : "Review the JD for transferable skills."} ${pay === "Pay not listed" ? "Compensation is not disclosed." : `Compensation listed: ${pay}.`}`;
-  return `<article class="internship-card"><div class="internship-head"><div><span class="lead-provider">${escapeHtml(job.source)} | OFFICIAL BOARD</span><h3>${escapeHtml(job.title)}</h3><p>${escapeHtml(job.company)} | ${escapeHtml(job.location)}</p></div><strong>${job.score}% fit</strong></div><div class="internship-facts"><span><small>Pay</small>${escapeHtml(pay)}</span><span><small>Posted</small>${escapeHtml(timing)}</span><span><small>Top skills</small>${escapeHtml(skills.join(", ") || "Review JD")}</span></div><div class="internship-actions"><button class="secondary-button" data-action="toggle-intern-summary" data-id="${escapeHtml(job.id)}">Quick summary</button><button class="secondary-button" data-action="details" data-id="${escapeHtml(job.id)}">Review</button><button class="primary-button" data-action="approve" data-id="${escapeHtml(job.id)}">Prepare application</button></div><p class="internship-summary" id="intern-summary-${escapeHtml(job.id)}" hidden>${escapeHtml(summary)}</p></article>`;
+  const sentence = String(job.description || "").replace(/\s+/g, " ").split(/(?<=[.!?])\s/)[0] || "Official early-career posting. Open the job details to check requirements.";
+  const eligibleForPack = job.score >= Number(state.settings.tailoringMinimumScore || 50);
+  const summary = `${sentence.slice(0, 260)} ${skills.length ? `Relevant skills found: ${skills.join(", ")}.` : "The role has limited overlap with your analyst profile, so it is shown as a transferable-skills option."}`;
+  return `<article class="internship-card"><div class="internship-head"><div><span class="lead-provider">${escapeHtml(job.source)} | OFFICIAL BOARD</span><h3>${escapeHtml(job.title)}</h3><p>${escapeHtml(job.company)} | ${escapeHtml(job.location)}</p></div><strong>${job.score}% fit</strong></div><div class="internship-facts"><span><small>Pay</small>${escapeHtml(pay)}</span><span><small>Posted</small>${escapeHtml(timing)}</span><span><small>Relevant skills</small>${escapeHtml(skills.join(", ") || "Transferable role")}</span></div><div class="internship-actions"><button class="secondary-button" data-action="toggle-intern-summary" data-id="${escapeHtml(job.id)}">What this role is</button><button class="secondary-button" data-action="details" data-id="${escapeHtml(job.id)}">Review JD</button>${eligibleForPack ? `<button class="primary-button" data-action="approve" data-id="${escapeHtml(job.id)}">Prepare resume</button>` : `<button class="secondary-button" data-action="details" data-id="${escapeHtml(job.id)}">Below resume gate</button>`}</div><p class="internship-summary" id="intern-summary-${escapeHtml(job.id)}" hidden>${escapeHtml(summary)}</p></article>`;
 }
 
 function renderPipeline() {
@@ -334,7 +351,7 @@ function renderSettings() {
       <div class="field"><label for="minimum-salary">Minimum CTC (LPA)</label><input id="minimum-salary" type="number" min="1" step="0.5" value="${(s.minimumSalary || 700000) / 100000}"><small>Target: ₹8-10 LPA · Stretch: ₹10-12 LPA</small></div>
       <div class="field"><label for="limit">Maximum applications per day</label><input id="limit" type="number" min="1" max="25" value="${s.dailyLimit}"></div>
       <div class="field"><label for="active-from">Activate search on</label><input id="active-from" type="date" value="${s.activeFrom || ""}"><small>Leave empty to scan now.</small></div>
-      <div class="field"><label for="freshness">Maximum posting age (hours)</label><input id="freshness" type="number" min="1" max="720" value="${s.freshnessHours || 72}"></div>
+      <div class="field"><label for="freshness">Maximum posting age (hours)</label><input id="freshness" type="number" min="24" max="720" value="${s.freshnessHours || 168}"><small>Seven days is recommended: older postings are hidden from new-match lists.</small></div>
       <div class="field"><label for="experience-tolerance">Experience gap allowed (years)</label><input id="experience-tolerance" type="number" min="0" max="3" step="0.5" value="${s.experienceToleranceYears ?? 1}"><small>Allows promising roles where the stated experience requirement is above your current experience.</small></div>
       <div class="field"><label for="match-score">Minimum match score</label><input id="match-score" type="number" min="50" max="95" value="${s.minimumMatchScore || 65}"></div>
       <div class="field"><label for="tailoring-score">Resume tailoring gate</label><input id="tailoring-score" type="number" min="65" max="95" value="${s.tailoringMinimumScore || 75}"><small>Only roles at or above this score can create a resume pack.</small></div>
@@ -376,6 +393,8 @@ async function handleAction(event) {
   const { action, id } = event.currentTarget.dataset;
   if (action === "approve") approveJob(id);
   if (action === "skip") updateJob(id, "skipped", "Job skipped and removed from your queue");
+  if (action === "save") updateJob(id, "shortlisted", "Saved for later. This role is retained for 30 days.");
+  if (action === "show-matches") { state.reviewFilter = event.currentTarget.dataset.filter || "matches"; saveState(); render(); }
   if (action === "details") showJob(id);
   if (action === "open-application") {
     const applyUrl = event.currentTarget.dataset.url;
@@ -449,6 +468,7 @@ function downloadResumePdf(item) {
     return lines;
   }, [""]).filter(Boolean);
   const pages = [[]];
+  const links = [];
   let y = 760;
   const left = 35;
   const right = 577;
@@ -479,7 +499,20 @@ function downloadResumePdf(item) {
   add(resume.name || state.profile.fullName, { size: 18, bold: true, align: "center", gap: 16 });
   add(resume.title || item.title, { size: 10, bold: true, align: "center", gap: 12 });
   add([resume.phone, resume.location].filter(Boolean).join(" | "), { size: 8.5, align: "center", gap: 10 });
-  add([resume.email, resume.linkedin, resume.website].filter(Boolean).join(" | "), { size: 8.2, align: "center", gap: 14 });
+  const contactParts = [resume.email, resume.linkedin ? "LinkedIn" : "", resume.website ? "Portfolio Website" : ""].filter(Boolean);
+  const contactText = contactParts.join(" | ");
+  const contactY = y;
+  const contactSize = 8.2;
+  const contactWidth = contactText.length * contactSize * .49;
+  const contactX = Math.max(left, (612 - contactWidth) / 2);
+  add(contactText, { size: contactSize, align: "center", gap: 14 });
+  let linkX = contactX;
+  contactParts.forEach((part, index) => {
+    const partWidth = part.length * contactSize * .49;
+    const url = part === resume.email ? `mailto:${resume.email}` : part === "LinkedIn" ? resume.linkedin : resume.website;
+    if (url) links.push({ page: 0, x: linkX, y: contactY - 2, width: partWidth, url });
+    linkX += partWidth + (index < contactParts.length - 1 ? 3 * contactSize * .49 : 0);
+  });
   section("Summary"); wrap(resume.summary).forEach(line => add(line, { gap: 10 }));
   section("Skills"); wrap(resume.skills).forEach(line => add(line, { gap: 10 }));
   section("Professional Experience");
@@ -499,13 +532,19 @@ function downloadResumePdf(item) {
   }
   const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"];
   const pageIds = pages.map((_, index) => 5 + index * 2);
+  const annotationStart = 5 + pages.length * 2;
+  const pageAnnotations = pages.map((_, index) => links.filter(link => link.page === index));
   objects[1] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(" ")}] /Count ${pages.length} >>`;
   pages.forEach((page, index) => {
     const pageId = 5 + index * 2;
     const streamId = pageId + 1;
     const stream = page.join("\n");
-    objects[pageId - 1] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${streamId} 0 R >>`;
+    const annotations = pageAnnotations[index].map((_, annotationIndex) => `${annotationStart + links.findIndex(link => link === pageAnnotations[index][annotationIndex])} 0 R`).join(" ");
+    objects[pageId - 1] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${streamId} 0 R${annotations ? ` /Annots [${annotations}]` : ""} >>`;
     objects[streamId - 1] = `<< /Length ${new TextEncoder().encode(stream).length} >>\nstream\n${stream}\nendstream`;
+  });
+  links.forEach((link, index) => {
+    objects[annotationStart + index - 1] = `<< /Type /Annot /Subtype /Link /Rect [${link.x.toFixed(1)} ${link.y.toFixed(1)} ${(link.x + link.width).toFixed(1)} ${(link.y + 10).toFixed(1)}] /Border [0 0 0] /A << /S /URI /URI (${escapePdf(link.url)}) >> >>`;
   });
   let pdf = "%PDF-1.4\n";
   const offsets = [0];
@@ -539,7 +578,7 @@ function showResumePreview(item) {
   const project = entry => `<section class="resume-entry"><h4>${escapeHtml(entry.name)} <small>${escapeHtml(entry.tech)}</small></h4><ul>${(entry.bullets || []).map(bullet => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul></section>`;
   const education = entry => `<section class="resume-entry resume-education"><h4>${escapeHtml(entry.degree)}${entry.school ? `, ${escapeHtml(entry.school)}` : ""} <small>${escapeHtml(entry.dates)}</small></h4>${entry.location ? `<p>${escapeHtml(entry.location)}</p>` : ""}</section>`;
   dialog.className = "pack-modal";
-  dialog.innerHTML = `<div class="dialog-content resume-preview"><div class="dialog-header preview-tools"><span class="badge new">TAILORED RESUME</span><button class="dialog-close" aria-label="Close">x</button></div><article class="resume-sheet"><header><h2>${escapeHtml(resume.name || state.profile.fullName)}</h2><strong>${escapeHtml(resume.title || item.title)}</strong><p>${escapeHtml([resume.phone, resume.location].filter(Boolean).join(" | "))}</p><p>${escapeHtml([resume.email, resume.linkedin, resume.website].filter(Boolean).join(" | "))}</p></header><section><h3>Summary</h3><p>${escapeHtml(resume.summary)}</p></section><section><h3>Skills</h3><p>${escapeHtml(resume.skills)}</p></section><section><h3>Professional Experience</h3>${(resume.experienceStructured || []).map(role).join("") || "<p>No experience entries.</p>"}</section>${(resume.projectsStructured || []).length ? `<section><h3>Projects</h3>${(resume.projectsStructured || []).map(project).join("")}</section>` : ""}${(resume.educationStructured || []).length || (resume.certificationsStructured || []).length ? `<section><h3>Education &amp; Certifications</h3>${(resume.educationStructured || []).map(education).join("")}${(resume.certificationsStructured || []).map(entry => `<p class="resume-certification">${escapeHtml(entry.name || entry)}</p>`).join("")}</section>` : ""}</article><div class="dialog-actions"><button class="secondary-button" id="back-to-pack">Back</button><button class="primary-button" id="preview-download-pdf">Download PDF</button></div></div>`;
+  dialog.innerHTML = `<div class="dialog-content resume-preview"><div class="dialog-header preview-tools"><span class="badge new">TAILORED RESUME</span><button class="dialog-close" aria-label="Close">x</button></div><article class="resume-sheet"><header><h2>${escapeHtml(resume.name || state.profile.fullName)}</h2><strong>${escapeHtml(resume.title || item.title)}</strong><p>${escapeHtml([resume.phone, resume.location].filter(Boolean).join(" | "))}</p><p><a href="mailto:${escapeHtml(resume.email || "")}">${escapeHtml(resume.email || "")}</a>${resume.linkedin ? ` | <a href="${escapeHtml(resume.linkedin)}" target="_blank" rel="noreferrer">LinkedIn</a>` : ""}${resume.website ? ` | <a href="${escapeHtml(resume.website)}" target="_blank" rel="noreferrer">Portfolio Website</a>` : ""}</p></header><section><h3>Summary</h3><p>${escapeHtml(resume.summary)}</p></section><section><h3>Skills</h3><p>${escapeHtml(resume.skills)}</p></section><section><h3>Professional Experience</h3>${(resume.experienceStructured || []).map(role).join("") || "<p>No experience entries.</p>"}</section>${(resume.projectsStructured || []).length ? `<section><h3>Projects</h3>${(resume.projectsStructured || []).map(project).join("")}</section>` : ""}${(resume.educationStructured || []).length || (resume.certificationsStructured || []).length ? `<section><h3>Education &amp; Certifications</h3>${(resume.educationStructured || []).map(education).join("")}${(resume.certificationsStructured || []).map(entry => `<p class="resume-certification">${escapeHtml(entry.name || entry)}</p>`).join("")}</section>` : ""}</article><div class="dialog-actions"><button class="secondary-button" id="back-to-pack">Back</button><button class="primary-button" id="preview-download-pdf">Download PDF</button></div></div>`;
   dialog.querySelector(".dialog-close").onclick = () => dialog.close();
   dialog.querySelector("#back-to-pack").onclick = () => showApplicationPack(item.id);
   dialog.querySelector("#preview-download-pdf").onclick = () => downloadResumePdf(item);
@@ -661,17 +700,22 @@ function reviewOutreach(id) {
 }
 
 async function runScan() {
+  if (state.settings.searchPaused) return toast("Resume scans when you are ready. Manual scanning is disabled while paused.", { title: "Scans paused" });
+  const button = [...document.querySelectorAll("[data-action='scan']"), document.querySelector("#demo-action")].find(item => item && !item.disabled);
+  if (button) { button.disabled = true; button.classList.add("is-loading"); button.dataset.label = button.textContent; button.textContent = "Scanning official boards..."; }
   if (remoteEnabled) {
     try {
       const result = await api("/scan", { method: "POST" });
       await connectBackend();
+      if (result.paused) return toast("Scheduled scanning is paused.", { title: "Scans paused" });
       const skipped = result.skipped || {};
       const exclusions = [
         ["too old", skipped.stale], ["location", skipped.location], ["experience", skipped.experience],
         ["salary", skipped.salary], ["low fit", skipped.lowFit]
       ].filter(([, count]) => count).map(([label, count]) => `${count} ${label}`).join(", ");
-      return toast(`${result.considered || 0} official postings checked across ${result.scanned} sources. ${result.discovered || 0} new match${result.discovered === 1 ? "" : "es"}; ${result.alreadyTracked || 0} already in your queue.${exclusions ? ` Excluded: ${exclusions}.` : ""}`, { title: result.discovered ? "New opportunities found" : "Scan complete", duration: 4200 });
-    } catch (error) { return toast(error.message); }
+      return toast(`${result.considered || 0} official postings checked. ${result.discovered || 0} new role${result.discovered === 1 ? "" : "s"}; ${result.alreadyTracked || 0} already tracked.${exclusions ? ` Excluded by your rules: ${exclusions}.` : ""}`, { title: result.discovered ? "New opportunities found" : "Scan complete", duration: 4200 });
+    } catch (error) { return toast(error.message, { title: "Scan failed", tone: "error" }); }
+    finally { if (button) { button.disabled = false; button.classList.remove("is-loading"); button.textContent = button.dataset.label || "Run job scan"; } }
   }
   state.scannedAt = new Date().toISOString();
   state.activity.unshift({ text: "Job scan completed across 3 demo sources", time: "Just now" });
@@ -789,7 +833,7 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
     state.settings.minimumSalary = (Number(document.querySelector("#minimum-salary").value) || 7) * 100000;
     state.settings.requiredSkills = document.querySelector("#skills").value.trim();
     state.settings.activeFrom = document.querySelector("#active-from").value;
-    state.settings.freshnessHours = Number(document.querySelector("#freshness").value) || 72;
+    state.settings.freshnessHours = Number(document.querySelector("#freshness").value) || 168;
     state.settings.experienceToleranceYears = Number(document.querySelector("#experience-tolerance").value) || 0;
     state.settings.minimumMatchScore = Number(document.querySelector("#match-score").value) || 65;
     state.settings.tailoringMinimumScore = Number(document.querySelector("#tailoring-score").value) || 75;
@@ -816,6 +860,7 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
           ,must_have_skills: state.settings.mustHaveSkills
           ,internship_titles: state.settings.internshipTitles
           ,experience_tolerance_years: state.settings.experienceToleranceYears
+          ,search_paused: state.settings.searchPaused
         }) });
       } catch (error) { return toast(error.message); }
     }
@@ -826,9 +871,27 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
 });
 
 document.querySelector("#notifications-button").addEventListener("click", () => {
-  const pending = state.jobs.filter(job => job.status === "new").length + state.leads.length;
+  const pending = state.jobs.filter(job => job.status === "new").length;
+  const alerts = state.leads.length;
   const replies = state.outreach.filter(item => item.status === "sent").length;
-  toast(pending || replies ? `${pending} opportunities need review; ${replies} recruiter threads are active.` : "No new notifications.");
+  toast(pending || replies || alerts ? `${pending} scored jobs are in your queues. ${alerts} portal alerts are unscored links, not job matches. ${replies} recruiter threads are active.` : "No new notifications.", { title: "Search status", duration: 4400 });
+});
+document.querySelector("#scan-toggle").addEventListener("click", async () => {
+  state.settings.searchPaused = !state.settings.searchPaused;
+  if (remoteEnabled) {
+    try {
+      await api("/settings", { method: "PUT", body: JSON.stringify({
+        target_role: state.settings.role, alternate_titles: state.settings.alternateTitles || "", preferred_locations: state.settings.location,
+        required_skills: state.settings.requiredSkills, excluded_keywords: state.settings.excludedKeywords || "", minimum_salary: state.settings.minimumSalary,
+        daily_application_limit: state.settings.dailyLimit, require_approval: state.settings.approval, followups_enabled: state.settings.followups,
+        followup_days: state.settings.followupDays || 5, active_from: state.settings.activeFrom || null, freshness_hours: state.settings.freshnessHours || 168,
+        minimum_match_score: state.settings.minimumMatchScore || 50, browser_notifications: state.settings.browserNotifications,
+        tailoring_minimum_score: state.settings.tailoringMinimumScore || 50, must_have_skills: state.settings.mustHaveSkills || "", internship_titles: state.settings.internshipTitles || "",
+        experience_tolerance_years: state.settings.experienceToleranceYears ?? 2, search_paused: state.settings.searchPaused
+      }) });
+    } catch (error) { state.settings.searchPaused = !state.settings.searchPaused; return toast(error.message, { title: "Could not update scans", tone: "error" }); }
+  }
+  saveState(); render(); toast(state.settings.searchPaused ? "Automatic and manual job scans are paused." : "Job scanning resumed.", { title: state.settings.searchPaused ? "Scans paused" : "Scans resumed" });
 });
 document.querySelector("#date-label").textContent = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "short", day: "numeric" }).format(new Date());
 

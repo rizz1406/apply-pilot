@@ -173,6 +173,13 @@ main { margin-left: var(--sidebar); min-height: 100vh; }
   border-radius: 7px;
   background: var(--surface);
 }
+.metric-button { width: 100%; text-align: left; cursor: pointer; color: inherit; }
+.metric-button:hover { border-color: #88a18e; box-shadow: var(--shadow); }
+.section-actions { display: flex; gap: 12px; align-items: center; }
+.is-loading { cursor: wait; opacity: .8; }
+.is-loading::before { content: ""; width: 13px; height: 13px; display: inline-block; margin-right: 8px; border: 2px solid rgba(255,255,255,.4); border-top-color: white; border-radius: 50%; vertical-align: -2px; animation: scan-spin .75s linear infinite; }
+@keyframes scan-spin { to { transform: rotate(360deg); } }
+.scan-toggle { min-height: 34px; padding: 0 10px; font-size: 11px; }
 .metric span { display: block; color: var(--muted); font-size: 12px; }
 .metric strong { display: inline-block; margin-top: 8px; font-size: 22px; }
 .metric small { margin-left: 7px; color: var(--green); font-size: 10px; font-weight: 700; }
@@ -380,6 +387,7 @@ dialog::backdrop { background: rgba(13, 23, 16, .5); backdrop-filter: blur(3px);
   .eyebrow { font-size: 10px; }
   .page-content { padding: 14px 12px 28px; }
   .agent-status { display: none; }
+  .scan-toggle { display: none; }
   .focus-strip { min-height: 132px; padding: 17px; display: block; }
   .focus-copy h2 { font-size: 18px; }
   .focus-progress { min-width: 0; margin-top: 18px; }

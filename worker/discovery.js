@@ -78,6 +78,9 @@ export async function fetchSource(source) {
 
 export async function scanSources(env) {
   const settings = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
+  if (settings.search_paused) {
+    return { discovered: 0, alreadyTracked: 0, expired: 0, considered: 0, scanned: 0, skipped: {}, errors: [], matches: [], paused: true };
+  }
   if (settings.active_from && Date.now() < new Date(`${settings.active_from}T00:00:00Z`).getTime()) {
     return { discovered: 0, expired: 0, scanned: 0, errors: [], matches: [], pausedUntil: settings.active_from };
   }
@@ -157,6 +160,9 @@ export async function scanSources(env) {
       await env.DB.prepare(`UPDATE ${source.source_table} SET last_error = ? WHERE id = ?`).bind(error.message, source.id).run();
     }
   }
+
+  // Saved roles are intentionally temporary: keep them for thirty days, then clear them.
+  await env.DB.prepare("UPDATE jobs SET status = 'expired' WHERE status = 'shortlisted' AND discovered_at < datetime('now', '-30 days')").run();
 
   await env.DB.prepare("INSERT INTO activity_log (event_type, message, metadata) VALUES ('scan', ?, ?)")
     .bind(`Job scan completed: ${discovered} new matches, ${alreadyTracked} already tracked, ${expired} expired`, JSON.stringify({ discovered, alreadyTracked, expired, considered, skipped, errors })).run();
