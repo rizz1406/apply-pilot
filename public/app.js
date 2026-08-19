@@ -681,8 +681,9 @@ function showAllAlerts() {
 function showJob(id) {
   const job = state.jobs.find(item => String(item.id) === String(id));
   dialog.innerHTML = `<div class="dialog-content"><div class="dialog-header"><div><span class="badge new">${job.score}% MATCH</span><h2>${job.title}</h2><p class="job-company">${job.company} · ${job.location}</p></div><button class="dialog-close" aria-label="Close">×</button></div>
-    <div class="match-reasons"><h3>Why this matches</h3><ul>${job.reasons.map(reason => `<li>${reason}</li>`).join("")}</ul></div>
-    <p class="job-company">The production agent will show the complete job description, eligibility checks, tailored resume preview and screening answers here.</p>
+    <div class="match-reasons"><h3>Why this matches</h3><ul>${job.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>
+    <div class="pack-grid"><section><h3>Job quality</h3><p class="job-company">${escapeHtml(job.score >= 75 ? "Strong role and skill alignment" : job.score >= 50 ? "Partial or transferable alignment" : "Broad early-career option")}</p><p class="job-company">Source: ${escapeHtml(job.source)} official board</p></section><section><h3>Before preparing</h3><p class="job-company">${escapeHtml(job.description ? "Full JD is available for resume tailoring." : "A full JD is required before a resume can be prepared.")}</p><p class="job-company">${escapeHtml(job.riskFlags?.join(" ") || "No source risk flags detected.")}</p></section></div>
+    <div class="match-reasons"><h3>Role summary</h3><p>${escapeHtml(String(job.description || "No description available.").replace(/\s+/g, " ").slice(0, 700))}</p></div>
     <div class="dialog-actions"><button class="secondary-button dialog-close-secondary">Close</button><button class="primary-button" id="dialog-approve">Approve application</button></div></div>`;
   dialog.showModal();
   dialog.querySelector(".dialog-close").onclick = () => dialog.close();

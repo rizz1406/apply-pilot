@@ -65,7 +65,7 @@ async function bootstrap(env) {
       (SELECT COUNT(*) FROM applications WHERE stage = 'offer') AS offers,
       (SELECT COUNT(*) FROM applications WHERE stage = 'rejected') AS rejected,
       (SELECT COUNT(*) FROM tailored_resumes) AS tailored_packs`).first(),
-    env.DB.prepare("SELECT name, email, source_url, verified FROM recruiter_contacts WHERE verified = 1 ORDER BY created_at DESC LIMIT 100").all(),
+    env.DB.prepare("SELECT name, email, source_url, verified FROM recruiter_contacts ORDER BY verified DESC, created_at DESC LIMIT 100").all(),
     env.DB.prepare(`SELECT j.title AS label, COUNT(*) AS applications,
       SUM(CASE WHEN a.stage IN ('interview','offer') THEN 1 ELSE 0 END) AS interviews
       FROM applications a JOIN jobs j ON j.id = a.job_id GROUP BY j.title ORDER BY applications DESC, interviews DESC LIMIT 8`).all(),
@@ -246,6 +246,9 @@ async function route(request, env) {
         env.DB.prepare(`INSERT INTO application_documents (id, application_id, tailored_resume_id, kind, content, mime_type) VALUES (?, ?, ?, 'json', ?, 'application/json') ON CONFLICT(application_id, kind) DO UPDATE SET tailored_resume_id=excluded.tailored_resume_id, content=excluded.content, created_at=CURRENT_TIMESTAMP`).bind(crypto.randomUUID(), application.id, tailored.id, tailored.resume_json),
         env.DB.prepare(`INSERT INTO application_documents (id, application_id, tailored_resume_id, kind, content, mime_type) VALUES (?, ?, ?, 'cover_letter', ?, 'text/plain') ON CONFLICT(application_id, kind) DO UPDATE SET tailored_resume_id=excluded.tailored_resume_id, content=excluded.content, created_at=CURRENT_TIMESTAMP`).bind(crypto.randomUUID(), application.id, tailored.id, draft.coverLetter || "")
       ]);
+      const contactEmails = [...new Set((job.description || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [])].slice(0, 5);
+      if (contactEmails.length) await env.DB.batch(contactEmails.map(email => env.DB.prepare(`INSERT INTO recruiter_contacts (job_id, email, source_url, verified)
+        VALUES (?, ?, ?, 0) ON CONFLICT(job_id, email) DO NOTHING`).bind(job.id, email.toLowerCase(), job.apply_url)));
     }
     await activity(env, "job_decision", `${body.decision}: ${job.title} at ${job.company}`, "job", job.id);
     return json({ ok: true, application });
@@ -371,6 +374,18 @@ async function scheduled(env, controller) {
       await syncApplicationConfirmations(env);
     }
     return { ...scan, portalLeads: alerts.discovered };
+  }
+  const digestKey = `daily_digest:${new Date().toISOString().slice(0, 10)}`;
+  const alreadySent = await env.DB.prepare("SELECT value FROM integration_state WHERE key = ?").bind(digestKey).first();
+  if (!alreadySent && env.GMAIL_REFRESH_TOKEN) {
+    const { results: matches } = await env.DB.prepare("SELECT title, company, location, score, apply_url FROM jobs WHERE status='new' AND score >= 75 AND discovered_at >= datetime('now', '-1 day') ORDER BY score DESC LIMIT 10").all();
+    const profile = await env.DB.prepare("SELECT email FROM candidate_profile WHERE id = 1").first();
+    if (matches.length && profile?.email) {
+      const lines = matches.map(match => `${match.score}% - ${match.title} at ${match.company}\n${match.location || "Location not listed"}\n${match.apply_url}`).join("\n\n");
+      await sendNotificationEmail(env, profile.email, `ApplyPilot daily digest: ${matches.length} strong matches`, `${lines}\n\nReview: https://applypilot.pages.dev`);
+      await activity(env, "daily_digest", `Daily digest sent with ${matches.length} strong matches`);
+    }
+    await env.DB.prepare("INSERT INTO integration_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP").bind(digestKey, "sent").run();
   }
   const due = await env.DB.prepare(`SELECT COUNT(*) AS count FROM outreach WHERE status = 'approved' AND scheduled_for <= CURRENT_TIMESTAMP`).first();
   await activity(env, "followup_check", `${due.count} approved follow-ups are due`);
