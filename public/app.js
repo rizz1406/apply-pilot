@@ -7,6 +7,11 @@ const SOURCE_PRESETS = [
   { provider: "ashby", organization: "atlan", label: "Atlan" },
   { provider: "ashby", organization: "certifyos", label: "CertifyOS" },
   { provider: "ashby", organization: "g2", label: "G2" },
+  { provider: "ashby", organization: "parker", label: "Parker" },
+  { provider: "ashby", organization: "valerie-group", label: "Valerie Group" },
+  { provider: "ashby", organization: "maneuver-marketing", label: "Maneuver Marketing" },
+  { provider: "ashby", organization: "mem0", label: "Mem0" },
+  { provider: "ashby", organization: "flagright.com", label: "Flagright" },
   { provider: "lever", organization: "shopback-2", label: "ShopBack" },
   { provider: "greenhouse", organization: "databricks", label: "Databricks" }
 ];
@@ -548,7 +553,12 @@ async function runScan() {
     try {
       const result = await api("/scan", { method: "POST" });
       await connectBackend();
-      return toast(`Scan complete. ${result.discovered} new matching jobs found.`);
+      const skipped = result.skipped || {};
+      const exclusions = [
+        ["too old", skipped.stale], ["location", skipped.location], ["experience", skipped.experience],
+        ["salary", skipped.salary], ["low fit", skipped.lowFit]
+      ].filter(([, count]) => count).map(([label, count]) => `${count} ${label}`).join(", ");
+      return toast(`Checked ${result.considered || 0} postings across ${result.scanned} official sources. ${result.discovered} new matches.${exclusions ? ` Excluded: ${exclusions}.` : ""}`);
     } catch (error) { return toast(error.message); }
   }
   state.scannedAt = new Date().toISOString();

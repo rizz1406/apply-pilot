@@ -95,6 +95,8 @@ export async function scanSources(env) {
   const sources = [...standard.results, ...external.results];
   let discovered = 0;
   let expired = 0;
+  let considered = 0;
+  const skipped = { stale: 0, location: 0, experience: 0, salary: 0, excluded: 0, lowFit: 0 };
   const errors = [];
   const matches = [];
 
@@ -103,9 +105,13 @@ export async function scanSources(env) {
       const jobs = await fetchSource(source);
       const currentIds = new Set(jobs.map(job => `${job.provider}:${job.externalId}`));
       for (const job of jobs) {
+        considered += 1;
         if (job.publishedAt && settings.freshness_hours) {
           const age = Date.now() - new Date(job.publishedAt).getTime();
-          if (Number.isFinite(age) && age > Number(settings.freshness_hours) * 3600000) continue;
+          if (Number.isFinite(age) && age > Number(settings.freshness_hours) * 3600000) {
+            skipped.stale += 1;
+            continue;
+          }
         }
         const internship = /\bintern(?:ship)?\b/i.test(`${job.title} ${job.description}`);
         const internshipSettings = internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
@@ -113,7 +119,15 @@ export async function scanSources(env) {
         // Internship hunting is intentionally broader: retain lower-fit roles in the
         // configured location so the user can prioritize pay and transferable skills.
         const internshipEligible = internship && match.score >= 40 && !match.reasons.includes("Location conflicts with the no-relocation preference");
-        if (!match.eligible && !internshipEligible) continue;
+        if (!match.eligible && !internshipEligible) {
+          const reason = match.reasons[0] || "";
+          if (reason.includes("Location conflicts")) skipped.location += 1;
+          else if (reason.includes("Requires at least")) skipped.experience += 1;
+          else if (reason.includes("salary is below")) skipped.salary += 1;
+          else if (reason.includes("excluded keyword")) skipped.excluded += 1;
+          else skipped.lowFit += 1;
+          continue;
+        }
         const id = `${job.provider}:${job.externalId}`;
         const result = await env.DB.prepare(`INSERT OR IGNORE INTO jobs
           (id, external_id, source_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, published_at, score, score_reasons, risk_flags, duplicate_key, opportunity_type)
@@ -141,6 +155,6 @@ export async function scanSources(env) {
   }
 
   await env.DB.prepare("INSERT INTO activity_log (event_type, message, metadata) VALUES ('scan', ?, ?)")
-    .bind(`Job scan completed: ${discovered} new matches, ${expired} expired`, JSON.stringify({ discovered, expired, errors })).run();
-  return { discovered, expired, scanned: sources.length, errors, matches };
+    .bind(`Job scan completed: ${discovered} new matches, ${expired} expired`, JSON.stringify({ discovered, expired, considered, skipped, errors })).run();
+  return { discovered, expired, considered, skipped, scanned: sources.length, errors, matches };
 }
