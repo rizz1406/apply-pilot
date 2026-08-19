@@ -2,14 +2,13 @@ const STORAGE_KEY = "applypilot-demo-state-v1";
 const API_TOKEN_KEY = "applypilot-api-token";
 const API_BASE = location.port === "4173" ? "http://127.0.0.1:8787/api" : "https://applypilot-api.rizwanmirza95551.workers.dev/api";
 let remoteEnabled = false;
-let showAllPortalAlerts = false;
 const SOURCE_PRESETS = [
-  { provider: "greenhouse", organization: "cloudflare", label: "Cloudflare" },
-  { provider: "greenhouse", organization: "datadog", label: "Datadog" },
-  { provider: "greenhouse", organization: "stripe", label: "Stripe" },
-  { provider: "greenhouse", organization: "databricks", label: "Databricks" },
-  { provider: "greenhouse", organization: "hubspot", label: "HubSpot" },
-  { provider: "smartrecruiters", organization: "Visa", label: "Visa" }
+  { provider: "ashby", organization: "sarvam", label: "Sarvam" },
+  { provider: "ashby", organization: "atlan", label: "Atlan" },
+  { provider: "ashby", organization: "certifyos", label: "CertifyOS" },
+  { provider: "ashby", organization: "g2", label: "G2" },
+  { provider: "lever", organization: "shopback-2", label: "ShopBack" },
+  { provider: "greenhouse", organization: "databricks", label: "Databricks" }
 ];
 
 const seedState = {
@@ -176,7 +175,7 @@ function saveState() {
 
 function counts() {
   return {
-    today: state.jobs.filter(job => job.status === "new").length + state.leads.length,
+    today: state.jobs.filter(job => job.status === "new" && job.opportunityType !== "internship").length,
     internships: state.jobs.filter(job => job.status === "new" && job.opportunityType === "internship").length,
     pipeline: state.applications.filter(item => item.stage !== "closed").length,
     outreach: state.outreach.filter(item => item.status !== "sent").length,
@@ -204,7 +203,7 @@ function render() {
   document.querySelector(".sidebar-profile strong").textContent = state.profile.fullName;
   document.querySelector(".sidebar-profile small").textContent = state.profile.currentTitle;
   const action = document.querySelector("#demo-action");
-  action.textContent = state.activeView === "today" ? "Run job scan" : state.activeView === "settings" ? "Save changes" : state.activeView === "internships" ? "Import official JD" : "Add item";
+  action.textContent = state.activeView === "today" || state.activeView === "internships" ? "Run job scan" : state.activeView === "settings" ? "Save changes" : "Add item";
   renderNav();
   if (state.activeView === "today") renderToday();
   if (state.activeView === "internships") renderInternships();
@@ -216,11 +215,7 @@ function render() {
 
 function renderToday() {
   const available = state.jobs.filter(job => job.status === "new" && job.opportunityType !== "internship");
-  const portalAlerts = state.leads.length;
-  const genericLead = lead => /^(linkedin|naukri|indeed) job posting$/i.test(String(lead.subject || "").trim()) || /^https?:\/\//i.test(String(lead.subject || ""));
-  const titledLeads = state.leads.filter(lead => !genericLead(lead));
-  const genericLeads = state.leads.filter(genericLead);
-  const reviewTotal = available.length + portalAlerts;
+  const reviewTotal = available.length;
   const activeApps = state.applications.filter(item => item.stage !== "closed").length;
   const interviews = state.applications.filter(item => ["interview", "offer"].includes(item.rawStage || item.stage)).length;
   const followupsReady = state.outreach.filter(item => item.status === "draft" || item.status === "approved").length;
@@ -231,17 +226,16 @@ function renderToday() {
       <div class="focus-copy">
         <span>Next best action</span>
         <h2>${reviewTotal ? `Review ${reviewTotal} new ${reviewTotal === 1 ? "opportunity" : "opportunities"}` : "Your review queue is clear"}</h2>
-        <p>${available.length ? `${available.length} scored ${available.length === 1 ? "match is" : "matches are"} ready for approval.${portalAlerts ? ` ${portalAlerts} portal ${portalAlerts === 1 ? "alert needs" : "alerts need"} JD review.` : ""}` : portalAlerts ? `${portalAlerts} trusted portal ${portalAlerts === 1 ? "alert needs" : "alerts need"} JD review before scoring.` : "The agent will notify you when new opportunities arrive."}</p>
+        <p>${available.length ? `${available.length} automatically scored ${available.length === 1 ? "match is" : "matches are"} ready for review.` : "The agent will notify you when new official opportunities arrive."}</p>
       </div>
       <div class="focus-progress"><div><span>Pending review</span><strong>${reviewTotal}</strong></div><div class="focus-progress-bar"><i style="width:${reviewPercent}%"></i></div></div>
     </section>
     <section class="summary-grid" aria-label="Job search summary">
       ${metric("Scored matches", available.length, available.length ? "Ready to review" : "None yet")}
-      ${metric("Portal alerts", portalAlerts, portalAlerts ? "JD review needed" : "None pending")}
+      ${metric("Official sources", state.sources.filter(source => source.enabled !== 0).length, "Full JD scanning")}
       ${metric("Active applications", activeApps, activeApps ? "Tracked in pipeline" : "None started")}
       ${metric("Follow-ups ready", followupsReady, followupsReady ? "Approve and send" : "None waiting")}
     </section>
-    ${state.leads.length ? `<section class="portal-leads"><div class="section-heading"><div><h2>Portal alerts</h2><p>Official links from restricted portals. Import a JD to calculate a real match and create a resume pack.</p></div><span><span class="badge new">${state.leads.length} NEW</span> <button class="text-button" data-action="toggle-all-alerts">${showAllPortalAlerts ? "Show less" : "Show all"}</button></span></div><div class="portal-alert-grid">${state.leads.slice(0, showAllPortalAlerts ? state.leads.length : 6).map(lead => `<article class="portal-alert-card"><div><span class="lead-provider">${escapeHtml(lead.provider)}</span><h3>${escapeHtml(lead.subject || "Job posting")}</h3><p>${genericLead(lead) ? "Title unavailable in alert email" : "Ready to import and score"}</p></div><button class="secondary-button" data-action="open-lead" data-id="${escapeHtml(lead.id)}" data-url="${escapeHtml(lead.url)}">Import JD</button></article>`).join("")}</div></section>` : ""}
     <div class="content-grid">
       <section>
         <div class="section-heading"><div><h2>Recommended for you</h2><p>${remoteEnabled ? "Live records from your configured sources" : "Demo records until the cloud backend is connected"}</p></div><button class="text-button" data-action="${remoteEnabled ? "scan" : "reset"}">${remoteEnabled ? "Refresh sources" : "Reset demo"}</button></div>
@@ -264,10 +258,11 @@ function metric(label, value, note) {
 function jobCard(job) {
   const skillReason = job.reasons.find(reason => /preferred skills found/i.test(reason)) || "Skill overlap needs JD review";
   const experienceReason = job.reasons.find(reason => /experience requirement|seniority/i.test(reason)) || "Experience level checked";
+  const fitLabel = job.score >= 90 ? "Strong match" : job.score >= 75 ? "Good match" : "Eligible match";
   return `<article class="job-card" data-job-id="${job.id}">
     <div class="company-logo" style="background:${job.color}">${job.initials}</div>
     <div>
-      <div class="match-summary"><strong>${job.score}% match</strong><span>${escapeHtml(skillReason)}</span><span>${escapeHtml(experienceReason)}</span></div><div class="job-title-row"><h3 class="job-title">${job.title}</h3><span class="badge new">NEW</span></div>
+      <div class="match-summary"><strong>${job.score}% ${fitLabel}</strong><span>${escapeHtml(skillReason)}</span><span>${escapeHtml(experienceReason)}</span></div><div class="job-title-row"><h3 class="job-title">${job.title}</h3><span class="badge new">READY TO APPLY</span></div>
       <p class="job-company">${job.company}</p>${job.riskFlags?.length ? `<p class="risk-note">Review: ${escapeHtml(job.riskFlags.join("; "))}</p>` : ""}
       <div class="job-meta"><span>${job.location}</span><span>${job.mode}</span><span>${job.salary}</span><span>${job.source}</span></div>
     </div>
@@ -275,14 +270,14 @@ function jobCard(job) {
     <div class="job-actions">
       <button class="secondary-button" data-action="skip" data-id="${job.id}">Skip</button>
       <button class="secondary-button" data-action="details" data-id="${job.id}">Review</button>
-      <button class="primary-button" data-action="approve" data-id="${job.id}">Approve</button>
+      <button class="primary-button" data-action="approve" data-id="${job.id}">Prepare application</button>
     </div>
   </article>`;
 }
 
 function renderInternships() {
   const internships = state.jobs.filter(job => job.status === "new" && job.opportunityType === "internship");
-  app.innerHTML = `<section class="focus-strip"><div class="focus-copy"><span>Official early-career roles</span><h2>${internships.length ? `${internships.length} internship opportunity${internships.length === 1 ? "" : "ies"}` : "No internship opportunities yet"}</h2><p>This queue is broader than full-time matching. It keeps India/remote roles so you can compare pay and transferable skills.</p></div></section><div class="section-heading"><div><h2>Early Career & Internships</h2><p>Official company postings with pay, skills, timing, and a short summary.</p></div><span><button class="text-button" data-action="import-internship">Import official JD</button> <button class="text-button" data-action="scan">Refresh sources</button></span></div><div class="internship-list">${internships.length ? internships.map(internshipCard).join("") : `<div class="empty-state"><h2>Queue is clear</h2><p>No official internship listing matches your India/remote location yet. Import an official JD to test the full application flow.</p><button class="primary-button" data-action="import-internship">Import official JD</button></div>`}</div>`;
+  app.innerHTML = `<section class="focus-strip"><div class="focus-copy"><span>Official early-career roles</span><h2>${internships.length ? `${internships.length} internship opportunit${internships.length === 1 ? "y" : "ies"}` : "No internship opportunities yet"}</h2><p>This queue is broader than full-time matching. It keeps India/remote roles so you can compare pay and transferable skills.</p></div></section><div class="section-heading"><div><h2>Early Career & Internships</h2><p>Automatically scored official company postings with pay, skills, timing, and a short summary.</p></div><button class="text-button" data-action="scan">Refresh sources</button></div><div class="internship-list">${internships.length ? internships.map(internshipCard).join("") : `<div class="empty-state"><h2>Queue is clear</h2><p>The agent is monitoring your official company sources for India and remote internships. New roles are scored before they appear here.</p><button class="primary-button" data-action="scan">Run job scan</button></div>`}</div>`;
 }
 
 function internshipCard(job) {
@@ -382,10 +377,7 @@ async function handleAction(event) {
   if (action === "add-preset") await addPreset(event.currentTarget.dataset.preset);
   if (action === "save-answers") await saveAnswerLibrary();
   if (action === "delete-source") await deleteSource(id);
-  if (action === "open-lead") await openLead(id, event.currentTarget.dataset.url);
-  if (action === "toggle-all-alerts") { showAllPortalAlerts = !showAllPortalAlerts; render(); }
   if (action === "toggle-intern-summary") toggleInternSummary(id);
-  if (action === "import-internship") showManualInternshipImport();
   if (action === "export-data") await exportData();
   if (action === "review-pack") showApplicationPack(id);
   if (action === "approve-send-followup") await approveAndSendFollowup(id);
@@ -665,7 +657,7 @@ document.addEventListener("click", event => {
 
 document.querySelector("#demo-action").addEventListener("click", async () => {
   if (state.activeView === "today") return runScan();
-  if (state.activeView === "internships") return showManualInternshipImport();
+  if (state.activeView === "internships") return runScan();
   if (state.activeView === "settings") {
     state.settings.role = document.querySelector("#role").value.trim() || seedState.settings.role;
     state.settings.alternateTitles = document.querySelector("#alternate-titles").value.trim();
