@@ -191,10 +191,10 @@ function counts() {
   };
 }
 
-function renderNav() {
+function renderNav(activeView) {
   const totals = counts();
   const markup = navItems.map(item => `
-    <button class="nav-button ${state.activeView === item.id ? "active" : ""}" data-view="${item.id}">
+    <button class="nav-button ${activeView === item.id ? "active" : ""}" data-view="${item.id}">
       <span class="nav-glyph" aria-hidden="true">${item.glyph}</span>
       <span>${item.label}</span>
       <span class="nav-count">${totals[item.id]}</span>
@@ -205,7 +205,8 @@ function renderNav() {
 
 function render() {
   const titles = { today: "Review jobs", internships: "Early Career & Internships", pipeline: "Application pipeline", outreach: "Recruiter outreach", settings: "Preferences" };
-  document.querySelector("#page-title").textContent = titles[state.activeView];
+  const activeView = titles[state.activeView] ? state.activeView : "today";
+  document.querySelector("#page-title").textContent = titles[activeView];
   const initials = state.profile.fullName.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase();
   document.querySelector(".sidebar-profile .avatar").textContent = initials;
   document.querySelector(".sidebar-profile strong").textContent = state.profile.fullName;
@@ -217,13 +218,16 @@ function render() {
   scanToggle.textContent = paused ? "Resume scans" : "Pause scans";
   scanToggle.classList.toggle("danger-button", !paused);
   agentStatus.textContent = paused ? "Scans paused" : "10-min scan active";
-  action.textContent = state.activeView === "today" || state.activeView === "internships" ? "Run job scan" : state.activeView === "settings" ? "Save changes" : "Add item";
-  renderNav();
-  if (state.activeView === "today") renderToday();
-  if (state.activeView === "internships") renderInternships();
-  if (state.activeView === "pipeline") renderPipeline();
-  if (state.activeView === "outreach") renderOutreach();
-  if (state.activeView === "settings") renderSettings();
+  action.textContent = activeView === "today" || activeView === "internships" ? "Run job scan" : activeView === "settings" ? "Save changes" : "Add item";
+  renderNav(activeView);
+  const viewRenderers = {
+    today: renderToday,
+    internships: renderInternships,
+    pipeline: renderPipeline,
+    outreach: renderOutreach,
+    settings: renderSettings
+  };
+  viewRenderers[activeView]();
   bindViewEvents();
 }
 
