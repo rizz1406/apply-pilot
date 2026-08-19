@@ -434,29 +434,61 @@ function showApplicationPack(id) {
 function downloadResumePdf(item) {
   const resume = item.tailoredResume;
   const escapePdf = value => String(value || "").replace(/[^\x20-\x7E]/g, " ").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
-  const wrap = (value, width = 94) => String(value || "").replace(/[^\x20-\x7E]/g, " ").split(/\s+/).reduce((lines, word) => {
+  const wrap = (value, width = 101) => String(value || "").replace(/[^\x20-\x7E]/g, " ").split(/\s+/).reduce((lines, word) => {
     const last = lines.at(-1) || "";
     if (!last || `${last} ${word}`.length <= width) lines[lines.length - 1] = `${last}${last ? " " : ""}${word}`;
     else lines.push(word);
     return lines;
   }, [""]).filter(Boolean);
   const pages = [[]];
-  let y = 754;
-  const add = (text, { size = 9, bold = false, indent = 0, gap = 12 } = {}) => {
-    if (y < 48) { pages.push([]); y = 754; }
-    pages.at(-1).push(`BT /F${bold ? 2 : 1} ${size} Tf 1 0 0 1 ${48 + indent} ${y} Tm (${escapePdf(text)}) Tj ET`);
+  let y = 760;
+  const left = 35;
+  const right = 577;
+  const add = (text, { size = 8.7, bold = false, x = left, align = "left", gap = 10.5 } = {}) => {
+    if (y < 43) { pages.push([]); y = 760; }
+    const safeText = escapePdf(text);
+    const width = Math.max(0, String(text || "").length * size * (bold ? .56 : .49));
+    const tx = align === "center" ? (612 - width) / 2 : align === "right" ? right - width : x;
+    pages.at(-1).push(`BT /F${bold ? 2 : 1} ${size} Tf 1 0 0 1 ${Math.max(left, tx).toFixed(1)} ${y.toFixed(1)} Tm (${safeText}) Tj ET`);
     y -= gap;
   };
-  const section = label => { y -= 5; add(label.toUpperCase(), { size: 10, bold: true, gap: 13 }); pages.at(-1).push(`0.45 w 48 ${y + 5} m 564 ${y + 5} l S`); y -= 3; };
-  add(resume.name || state.profile.fullName, { size: 16, bold: true, gap: 18 });
-  add(resume.title || item.title, { size: 10, bold: true, gap: 13 });
-  add([resume.email, resume.phone, resume.location].filter(Boolean).join(" | "), { size: 8.5, gap: 17 });
-  section("Summary"); wrap(resume.summary).forEach(line => add(line, { gap: 11 }));
-  section("Skills"); wrap(resume.skills).forEach(line => add(line, { gap: 11 }));
+  const addPair = (primary, secondary, { size = 8.7, bold = false, gap = 10.5 } = {}) => {
+    if (y < 43) { pages.push([]); y = 760; }
+    const primaryWidth = Math.max(0, String(primary || "").length * size * (bold ? .56 : .49));
+    const secondarySize = 8.4;
+    const secondaryWidth = Math.max(0, String(secondary || "").length * secondarySize * .49);
+    pages.at(-1).push(`BT /F${bold ? 2 : 1} ${size} Tf 1 0 0 1 ${left} ${y.toFixed(1)} Tm (${escapePdf(primary)}) Tj ET`);
+    if (secondary) pages.at(-1).push(`BT /F1 ${secondarySize} Tf 1 0 0 1 ${Math.max(left + primaryWidth + 12, right - secondaryWidth).toFixed(1)} ${y.toFixed(1)} Tm (${escapePdf(secondary)}) Tj ET`);
+    y -= gap;
+  };
+  const section = label => {
+    y -= 4;
+    add(label.toUpperCase(), { size: 10.2, bold: true, gap: 11 });
+    pages.at(-1).push(`0.35 w ${left} ${y + 5} m ${right} ${y + 5} l S`);
+    y -= 2;
+  };
+  const addBullets = bullets => (bullets || []).forEach(bullet => wrap(`- ${bullet}`, 97).forEach((line, index) => add(line, { x: index ? left + 10 : left + 6, gap: 10 })));
+  add(resume.name || state.profile.fullName, { size: 18, bold: true, align: "center", gap: 16 });
+  add(resume.title || item.title, { size: 10, bold: true, align: "center", gap: 12 });
+  add([resume.phone, resume.location].filter(Boolean).join(" | "), { size: 8.5, align: "center", gap: 10 });
+  add([resume.email, resume.linkedin, resume.website].filter(Boolean).join(" | "), { size: 8.2, align: "center", gap: 14 });
+  section("Summary"); wrap(resume.summary).forEach(line => add(line, { gap: 10 }));
+  section("Skills"); wrap(resume.skills).forEach(line => add(line, { gap: 10 }));
   section("Professional Experience");
-  (resume.experienceStructured || []).forEach(entry => { add(`${entry.role} | ${entry.dates || ""}`, { bold: true, gap: 11 }); add(`${entry.company} | ${entry.location || ""}`, { size: 8.5, gap: 10 }); (entry.bullets || []).forEach(bullet => wrap(`- ${bullet}`, 88).forEach(line => add(line, { indent: 8, gap: 10 }))); y -= 3; });
-  if ((resume.projectsStructured || []).length) { section("Projects"); (resume.projectsStructured || []).forEach(entry => { add(`${entry.name} | ${entry.tech || ""}`, { bold: true, gap: 11 }); (entry.bullets || []).forEach(bullet => wrap(`- ${bullet}`, 88).forEach(line => add(line, { indent: 8, gap: 10 }))); y -= 3; }); }
-  if ((resume.educationStructured || []).length || (resume.certificationsStructured || []).length) { section("Education & Certifications"); (resume.educationStructured || []).forEach(entry => add(`${entry.degree} | ${entry.school} | ${entry.dates || ""}`, { gap: 11 })); (resume.certificationsStructured || []).forEach(entry => add(entry.name, { gap: 11 })); }
+  (resume.experienceStructured || []).forEach(entry => {
+    addPair(entry.role || "", entry.dates || "", { bold: true, gap: 10 });
+    add(`${entry.company || ""}${entry.location ? ` | ${entry.location}` : ""}`, { size: 8.6, gap: 10 });
+    addBullets(entry.bullets); y -= 2;
+  });
+  if ((resume.projectsStructured || []).length) {
+    section("Projects");
+    (resume.projectsStructured || []).forEach(entry => { addPair(entry.name || "", entry.tech || "", { bold: true, gap: 10 }); addBullets(entry.bullets); y -= 2; });
+  }
+  if ((resume.educationStructured || []).length || (resume.certificationsStructured || []).length) {
+    section("Education & Certifications");
+    (resume.educationStructured || []).forEach(entry => { addPair(`${entry.degree || ""}${entry.school ? `, ${entry.school}` : ""}`, entry.dates || "", { bold: true, gap: 10 }); if (entry.location) add(entry.location, { size: 8.4, gap: 10 }); });
+    (resume.certificationsStructured || []).forEach(entry => add(entry.name || entry, { gap: 10 }));
+  }
   const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"];
   const pageIds = pages.map((_, index) => 5 + index * 2);
   objects[1] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(" ")}] /Count ${pages.length} >>`;
@@ -476,7 +508,7 @@ function downloadResumePdf(item) {
 }
 
 function buildAtsLatex(resume, item) {
-  const esc = value => String(value || "").replace(/([#$%&_{}])/g, "\\$1").replace(/\\/g, "\\textbackslash{}").replace(/~/g, "\\textasciitilde{}").replace(/\^/g, "\\textasciicircum{}");
+  const esc = value => String(value || "").replace(/\\/g, "\\textbackslash{}").replace(/([#$%&_{}])/g, "\\$1").replace(/~/g, "\\textasciitilde{}").replace(/\^/g, "\\textasciicircum{}");
   const lines = [
     "\\documentclass{resume}", "\\usepackage[left=0.4in,top=0.4in,right=0.4in,bottom=0.4in]{geometry}", "\\usepackage{hyperref}", "\\hypersetup{colorlinks=true,urlcolor=blue}",
     `\\name{${esc(resume.name || state.profile.fullName)}}`,
@@ -495,9 +527,11 @@ function buildAtsLatex(resume, item) {
 
 function showResumePreview(item) {
   const resume = item.tailoredResume;
-  const role = entry => `<section><h3>${escapeHtml(entry.role)} <small>${escapeHtml(entry.dates)}</small></h3><p>${escapeHtml(entry.company)} | ${escapeHtml(entry.location)}</p><ul>${(entry.bullets || []).map(bullet => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul></section>`;
-  const project = entry => `<section><h3>${escapeHtml(entry.name)}</h3><p>${escapeHtml(entry.tech)}</p><ul>${(entry.bullets || []).map(bullet => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul></section>`;
-  dialog.innerHTML = `<div class="dialog-content resume-preview"><div class="dialog-header"><div><span class="badge new">TAILORED RESUME</span><h2>${escapeHtml(resume.name || state.profile.fullName)}</h2><p class="job-company">${escapeHtml(resume.title || item.title)}</p></div><button class="dialog-close" aria-label="Close">x</button></div><p class="job-company">${escapeHtml([resume.email, resume.phone, resume.location].filter(Boolean).join(" | "))}</p><section><h3>Summary</h3><p>${escapeHtml(resume.summary)}</p></section><section><h3>Skills</h3><p>${escapeHtml(resume.skills)}</p></section><h3>Experience</h3>${(resume.experienceStructured || []).map(role).join("") || "<p>No experience entries.</p>"}<h3>Projects</h3>${(resume.projectsStructured || []).map(project).join("") || "<p>No project entries.</p>"}<div class="dialog-actions"><button class="secondary-button" id="back-to-pack">Back</button><button class="primary-button" id="preview-download-pdf">Download PDF</button></div></div>`;
+  const role = entry => `<section class="resume-entry"><h4>${escapeHtml(entry.role)} <small>${escapeHtml(entry.dates)}</small></h4><p>${escapeHtml(entry.company)}${entry.location ? ` <span>|</span> ${escapeHtml(entry.location)}` : ""}</p><ul>${(entry.bullets || []).map(bullet => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul></section>`;
+  const project = entry => `<section class="resume-entry"><h4>${escapeHtml(entry.name)} <small>${escapeHtml(entry.tech)}</small></h4><ul>${(entry.bullets || []).map(bullet => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul></section>`;
+  const education = entry => `<section class="resume-entry resume-education"><h4>${escapeHtml(entry.degree)}${entry.school ? `, ${escapeHtml(entry.school)}` : ""} <small>${escapeHtml(entry.dates)}</small></h4>${entry.location ? `<p>${escapeHtml(entry.location)}</p>` : ""}</section>`;
+  dialog.className = "pack-modal";
+  dialog.innerHTML = `<div class="dialog-content resume-preview"><div class="dialog-header preview-tools"><span class="badge new">TAILORED RESUME</span><button class="dialog-close" aria-label="Close">x</button></div><article class="resume-sheet"><header><h2>${escapeHtml(resume.name || state.profile.fullName)}</h2><strong>${escapeHtml(resume.title || item.title)}</strong><p>${escapeHtml([resume.phone, resume.location].filter(Boolean).join(" | "))}</p><p>${escapeHtml([resume.email, resume.linkedin, resume.website].filter(Boolean).join(" | "))}</p></header><section><h3>Summary</h3><p>${escapeHtml(resume.summary)}</p></section><section><h3>Skills</h3><p>${escapeHtml(resume.skills)}</p></section><section><h3>Professional Experience</h3>${(resume.experienceStructured || []).map(role).join("") || "<p>No experience entries.</p>"}</section>${(resume.projectsStructured || []).length ? `<section><h3>Projects</h3>${(resume.projectsStructured || []).map(project).join("")}</section>` : ""}${(resume.educationStructured || []).length || (resume.certificationsStructured || []).length ? `<section><h3>Education &amp; Certifications</h3>${(resume.educationStructured || []).map(education).join("")}${(resume.certificationsStructured || []).map(entry => `<p class="resume-certification">${escapeHtml(entry.name || entry)}</p>`).join("")}</section>` : ""}</article><div class="dialog-actions"><button class="secondary-button" id="back-to-pack">Back</button><button class="primary-button" id="preview-download-pdf">Download PDF</button></div></div>`;
   dialog.querySelector(".dialog-close").onclick = () => dialog.close();
   dialog.querySelector("#back-to-pack").onclick = () => showApplicationPack(item.id);
   dialog.querySelector("#preview-download-pdf").onclick = () => downloadResumePdf(item);
