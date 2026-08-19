@@ -403,26 +403,27 @@ function showApplicationPack(id) {
   if (!item?.tailoredResume) return toast("Application pack is not available.");
   const audit = item.resumeAudit || {};
   const coverage = item.keywordCoverage || {};
+  const resumeApproved = item.tailoredStatus === "approved" || item.rawStage === "approved";
   dialog.className = "pack-modal";
   dialog.innerHTML = `<div class="dialog-content pack-dialog"><div class="dialog-header"><div><span class="badge new">${item.tailoredScore || 0}% TAILORED</span><h2>${escapeHtml(item.title)}</h2><p class="job-company">${escapeHtml(item.company)} · ${escapeHtml(item.tailoredStatus || "review")}</p></div><button class="dialog-close" aria-label="Close">x</button></div>
     <div class="pack-grid"><section><h3>ATS coverage</h3><strong class="pack-score">${coverage.pct ?? "-"}%</strong><p class="job-company">Matched: ${escapeHtml((coverage.matched || []).join(", ") || "No tracked keywords")}</p><p class="job-company">Missing: ${escapeHtml((coverage.missing || []).join(", ") || "None")}</p></section><section><h3>Truth audit</h3><strong>${escapeHtml(audit.verdict || "review")}</strong><p class="job-company">${Number(audit.autoCorrected || 0)} grounded corrections applied</p><p class="job-company">${escapeHtml((audit.qualityIssues || []).join(" ") || "No quality issues detected")}</p></section></div>
     <div class="match-reasons"><h3>Tailored summary</h3><p>${escapeHtml(item.tailoredResume.summary)}</p><h3>Prioritized skills</h3><p>${escapeHtml(item.tailoredResume.skills)}</p></div>
     <div class="match-reasons"><h3>Cover letter</h3><p class="prewrap">${escapeHtml(item.coverLetter || "Not generated")}</p></div>
-    <div class="dialog-actions"><button class="secondary-button" id="view-resume">View resume</button><button class="secondary-button" id="download-json">Resume JSON</button><button class="secondary-button" id="download-tex">LaTeX</button><button class="secondary-button" id="download-pdf">Download PDF</button><button class="secondary-button" id="open-application">Open application</button><button class="secondary-button" id="mark-applied">Mark applied</button><button class="primary-button" id="approve-tailored">Approve resume</button></div>
+    <div class="dialog-actions"><button class="secondary-button" id="view-resume">View resume</button><button class="secondary-button" id="download-json">Resume JSON</button><button class="secondary-button" id="download-tex">LaTeX</button><button class="secondary-button" id="download-pdf">Download PDF</button><button class="secondary-button" id="open-application">Open application</button><button class="secondary-button" id="mark-applied">Mark applied</button>${resumeApproved ? `<span class="approval-note">Resume approved</span>` : `<button class="primary-button" id="approve-tailored">Approve resume</button>`}</div>
     <button class="text-button pack-followup" id="prepare-interview">Create interview workspace</button>
     <button class="text-button pack-followup" id="create-followup">Create recruiter follow-up</button></div>`;
   dialog.showModal();
   dialog.querySelector(".dialog-close").onclick = () => dialog.close();
   dialog.querySelector("#view-resume").onclick = () => showResumePreview(item);
   dialog.querySelector("#download-json").onclick = () => downloadText(`${item.company}-${item.title}.json`.replace(/[^a-z0-9.-]+/gi, "_"), JSON.stringify(item.tailoredResume, null, 2), "application/json");
-  dialog.querySelector("#download-tex").onclick = () => downloadText(`${item.company}-${item.title}.tex`.replace(/[^a-z0-9.-]+/gi, "_"), item.latex || "", "application/x-latex");
+  dialog.querySelector("#download-tex").onclick = () => downloadText(`${item.company}-${item.title}.tex`.replace(/[^a-z0-9.-]+/gi, "_"), buildAtsLatex(item.tailoredResume, item), "application/x-latex");
   dialog.querySelector("#download-pdf").onclick = () => downloadResumePdf(item);
   dialog.querySelector("#open-application").onclick = () => window.open(item.applyUrl, "_blank", "noopener,noreferrer");
   dialog.querySelector("#mark-applied").onclick = async () => {
     try { await api(`/applications/${encodeURIComponent(item.id)}/stage`, { method: "PUT", body: JSON.stringify({ stage: "applied" }) }); dialog.close(); await connectBackend(); toast("Application marked as applied."); }
     catch (error) { toast(error.message); }
   };
-  dialog.querySelector("#approve-tailored").onclick = async () => {
+  if (!resumeApproved) dialog.querySelector("#approve-tailored").onclick = async () => {
     try { await api(`/tailored-resumes/${encodeURIComponent(item.tailoredResumeId)}/approve`, { method: "POST" }); dialog.close(); await connectBackend(); toast("Resume approved. Application moved to Ready to apply."); }
     catch (error) { toast(error.message); }
   };
@@ -430,32 +431,40 @@ function showApplicationPack(id) {
   dialog.querySelector("#prepare-interview").onclick = () => createInterviewWorkspace(item);
 }
 
-function resumeLines(resume, item) {
-  const wrap = (value, width = 88) => String(value || "").replace(/[^\x20-\x7E]/g, " ").split(/\s+/).reduce((lines, word) => {
+function downloadResumePdf(item) {
+  const resume = item.tailoredResume;
+  const escapePdf = value => String(value || "").replace(/[^\x20-\x7E]/g, " ").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  const wrap = (value, width = 94) => String(value || "").replace(/[^\x20-\x7E]/g, " ").split(/\s+/).reduce((lines, word) => {
     const last = lines.at(-1) || "";
     if (!last || `${last} ${word}`.length <= width) lines[lines.length - 1] = `${last}${last ? " " : ""}${word}`;
     else lines.push(word);
     return lines;
   }, [""]).filter(Boolean);
-  const lines = [resume.name || state.profile.fullName, resume.title || item.title, `${resume.email || ""} ${resume.phone || ""}`.trim(), resume.location || "", "", "SUMMARY", ...wrap(resume.summary), "", "SKILLS", ...wrap(resume.skills)];
-  for (const entry of resume.experienceStructured || []) lines.push("", "EXPERIENCE", `${entry.role} | ${entry.company} | ${entry.dates}`, ...(entry.bullets || []).flatMap(bullet => wrap(`- ${bullet}`)));
-  for (const project of resume.projectsStructured || []) lines.push("", "PROJECTS", `${project.name} | ${project.tech}`, ...(project.bullets || []).flatMap(bullet => wrap(`- ${bullet}`)));
-  return lines;
-}
-
-function downloadResumePdf(item) {
-  const escapePdf = value => String(value).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
-  const pages = [];
-  const lines = resumeLines(item.tailoredResume, item);
-  for (let index = 0; index < lines.length; index += 48) pages.push(lines.slice(index, index + 48));
-  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
-  const pageIds = pages.map((_, index) => 4 + index * 2);
+  const pages = [[]];
+  let y = 754;
+  const add = (text, { size = 9, bold = false, indent = 0, gap = 12 } = {}) => {
+    if (y < 48) { pages.push([]); y = 754; }
+    pages.at(-1).push(`BT /F${bold ? 2 : 1} ${size} Tf 1 0 0 1 ${48 + indent} ${y} Tm (${escapePdf(text)}) Tj ET`);
+    y -= gap;
+  };
+  const section = label => { y -= 5; add(label.toUpperCase(), { size: 10, bold: true, gap: 13 }); pages.at(-1).push(`0.45 w 48 ${y + 5} m 564 ${y + 5} l S`); y -= 3; };
+  add(resume.name || state.profile.fullName, { size: 16, bold: true, gap: 18 });
+  add(resume.title || item.title, { size: 10, bold: true, gap: 13 });
+  add([resume.email, resume.phone, resume.location].filter(Boolean).join(" | "), { size: 8.5, gap: 17 });
+  section("Summary"); wrap(resume.summary).forEach(line => add(line, { gap: 11 }));
+  section("Skills"); wrap(resume.skills).forEach(line => add(line, { gap: 11 }));
+  section("Professional Experience");
+  (resume.experienceStructured || []).forEach(entry => { add(`${entry.role} | ${entry.dates || ""}`, { bold: true, gap: 11 }); add(`${entry.company} | ${entry.location || ""}`, { size: 8.5, gap: 10 }); (entry.bullets || []).forEach(bullet => wrap(`- ${bullet}`, 88).forEach(line => add(line, { indent: 8, gap: 10 }))); y -= 3; });
+  if ((resume.projectsStructured || []).length) { section("Projects"); (resume.projectsStructured || []).forEach(entry => { add(`${entry.name} | ${entry.tech || ""}`, { bold: true, gap: 11 }); (entry.bullets || []).forEach(bullet => wrap(`- ${bullet}`, 88).forEach(line => add(line, { indent: 8, gap: 10 }))); y -= 3; }); }
+  if ((resume.educationStructured || []).length || (resume.certificationsStructured || []).length) { section("Education & Certifications"); (resume.educationStructured || []).forEach(entry => add(`${entry.degree} | ${entry.school} | ${entry.dates || ""}`, { gap: 11 })); (resume.certificationsStructured || []).forEach(entry => add(entry.name, { gap: 11 })); }
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"];
+  const pageIds = pages.map((_, index) => 5 + index * 2);
   objects[1] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(" ")}] /Count ${pages.length} >>`;
   pages.forEach((page, index) => {
-    const pageId = 4 + index * 2;
+    const pageId = 5 + index * 2;
     const streamId = pageId + 1;
-    const stream = `BT /F1 10 Tf 52 748 Td ${page.map(line => `(${escapePdf(line)}) Tj 0 -14 Td`).join("\n")} ET`;
-    objects[pageId - 1] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${streamId} 0 R >>`;
+    const stream = page.join("\n");
+    objects[pageId - 1] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${streamId} 0 R >>`;
     objects[streamId - 1] = `<< /Length ${new TextEncoder().encode(stream).length} >>\nstream\n${stream}\nendstream`;
   });
   let pdf = "%PDF-1.4\n";
@@ -464,6 +473,24 @@ function downloadResumePdf(item) {
   const xref = new TextEncoder().encode(pdf).length;
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map(offset => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
   downloadText(`${item.company}-${item.title}.pdf`.replace(/[^a-z0-9.-]+/gi, "_"), pdf, "application/pdf");
+}
+
+function buildAtsLatex(resume, item) {
+  const esc = value => String(value || "").replace(/([#$%&_{}])/g, "\\$1").replace(/\\/g, "\\textbackslash{}").replace(/~/g, "\\textasciitilde{}").replace(/\^/g, "\\textasciicircum{}");
+  const lines = [
+    "\\documentclass{resume}", "\\usepackage[left=0.4in,top=0.4in,right=0.4in,bottom=0.4in]{geometry}", "\\usepackage{hyperref}", "\\hypersetup{colorlinks=true,urlcolor=blue}",
+    `\\name{${esc(resume.name || state.profile.fullName)}}`,
+    `\\address{${esc(resume.phone || "")} \\ ${esc(resume.location || "Hyderabad, Telangana")}}`,
+    `\\address{\\href{mailto:${esc(resume.email || "")}}{${esc(resume.email || "")}} \\ \\href{${esc(resume.linkedin || "")}}{LinkedIn} \\ \\href{${esc(resume.website || "")}}{Portfolio Website}}`,
+    `\\address{${esc(resume.title || item.title)}}`, "\\begin{document}", "\\vspace{-10pt}", "\\begin{rSection}{Summary}", esc(resume.summary), "\\end{rSection}",
+    "\\vspace{-8pt}", "\\begin{rSection}{Skills}", esc(resume.skills), "\\end{rSection}", "\\vspace{-8pt}", "\\begin{rSection}{Professional Experience}"
+  ];
+  (resume.experienceStructured || []).forEach(entry => { lines.push(`\\textbf{${esc(entry.role)}} \\hfill ${esc(entry.dates)}\\\\`, `${esc(entry.company)} \\hfill \\textit{${esc(entry.location)}}`, "\\begin{itemize}", ...(entry.bullets || []).map(bullet => `\\item ${esc(bullet)}`), "\\end{itemize}", "\\vspace{2pt}"); });
+  lines.push("\\end{rSection}");
+  if ((resume.projectsStructured || []).length) { lines.push("\\vspace{-8pt}", "\\begin{rSection}{Projects}"); (resume.projectsStructured || []).forEach(entry => { lines.push(`\\item \\textbf{${esc(entry.name)}} \\hfill \\textit{${esc(entry.tech)}}`, "\\begin{itemize}", ...(entry.bullets || []).map(bullet => `\\item ${esc(bullet)}`), "\\end{itemize}"); }); lines.push("\\end{rSection}"); }
+  if ((resume.educationStructured || []).length || (resume.certificationsStructured || []).length) { lines.push("\\vspace{-8pt}", "\\begin{rSection}{Education \\& Certifications}"); (resume.educationStructured || []).forEach(entry => lines.push(`\\textbf{${esc(entry.degree)}}, ${esc(entry.school)} \\hfill ${esc(entry.dates)}\\\\`, `\\textit{${esc(entry.location)}}`)); (resume.certificationsStructured || []).forEach(entry => lines.push(`\\item ${esc(entry.name)}`)); lines.push("\\end{rSection}"); }
+  lines.push("\\end{document}");
+  return lines.join("\n");
 }
 
 function showResumePreview(item) {
