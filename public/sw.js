@@ -1,5 +1,5 @@
-const CACHE = "applypilot-v37";
-const ASSETS = ["./", "./index.html", "./styles.css?v=37", "./app.js?v=37", "./manifest.webmanifest", "./icon.svg", "./resume.cls"];
+const CACHE = "applypilot-v38";
+const ASSETS = ["./", "./index.html", "./styles.css?v=38", "./app.js?v=38", "./manifest.webmanifest", "./icon.svg", "./resume.cls"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));

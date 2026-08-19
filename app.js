@@ -227,7 +227,12 @@ function render() {
     outreach: renderOutreach,
     settings: renderSettings
   };
-  viewRenderers[activeView]();
+  try {
+    viewRenderers[activeView]();
+  } catch (error) {
+    console.error(`Failed to render ${activeView}`, error);
+    app.innerHTML = `<div class="empty-state render-error"><h2>This view could not load</h2><p>${escapeHtml(error.message)}</p><button class="primary-button" data-action="reload-view">Try again</button></div>`;
+  }
   bindViewEvents();
 }
 
@@ -240,7 +245,6 @@ function renderToday() {
   const activeApps = state.applications.filter(item => item.stage !== "closed").length;
   const interviews = state.applications.filter(item => ["interview", "offer"].includes(item.rawStage || item.stage)).length;
   const followupsReady = state.outreach.filter(item => item.status === "draft" || item.status === "approved").length;
-  const reviewed = Math.max(0, state.jobs.length + portalAlerts - reviewTotal);
   const reviewPercent = reviewTotal ? 0 : 100;
   app.innerHTML = `
     <section class="focus-strip">
@@ -395,6 +399,7 @@ function bindViewEvents() {
 
 async function handleAction(event) {
   const { action, id } = event.currentTarget.dataset;
+  if (action === "reload-view") return render();
   if (action === "approve") approveJob(id);
   if (action === "skip") updateJob(id, "skipped", "Job skipped and removed from your queue");
   if (action === "save") updateJob(id, "shortlisted", "Saved for later. This role is retained for 30 days.");
