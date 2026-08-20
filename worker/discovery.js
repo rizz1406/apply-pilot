@@ -76,6 +76,23 @@ export async function fetchSource(source) {
   throw new Error(`Unsupported provider: ${source.provider}`);
 }
 
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+export async function fetchSourceWithRetry(source, attempts = 3, fetcher = fetchSource) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return { jobs: await fetcher(source), attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await wait(100 * (2 ** (attempt - 1)));
+    }
+  }
+  const failure = new Error(lastError?.message || "Source scan failed");
+  failure.attempts = attempts;
+  throw failure;
+}
+
 export async function scanSources(env) {
   const settings = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
   if (settings.search_paused) {
@@ -84,6 +101,13 @@ export async function scanSources(env) {
   if (settings.active_from && Date.now() < new Date(`${settings.active_from}T00:00:00Z`).getTime()) {
     return { discovered: 0, expired: 0, scanned: 0, errors: [], matches: [], pausedUntil: settings.active_from };
   }
+  await env.DB.prepare("UPDATE task_runs SET status='failed', last_error='Scan lease expired', completed_at=CURRENT_TIMESTAMP WHERE task_type='job_scan' AND status='running' AND started_at < datetime('now', '-15 minutes')").run();
+  const activeTask = await env.DB.prepare("SELECT id, started_at FROM task_runs WHERE task_type='job_scan' AND status='running' ORDER BY started_at DESC LIMIT 1").first();
+  if (activeTask) {
+    return { discovered: 0, alreadyTracked: 0, expired: 0, considered: 0, scanned: 0, skipped: {}, errors: [], matches: [], alreadyRunning: true, taskId: activeTask.id };
+  }
+  const taskId = crypto.randomUUID();
+  await env.DB.prepare("INSERT INTO task_runs (id, task_type, status, max_retries) VALUES (?, 'job_scan', 'running', 2)").bind(taskId).run();
   const profile = await env.DB.prepare("SELECT current_role_start, experience_at_search FROM candidate_profile WHERE id = 1").first();
   if (profile?.current_role_start) {
     const started = new Date(`${profile.current_role_start}-01T00:00:00Z`);
@@ -100,13 +124,18 @@ export async function scanSources(env) {
   let expired = 0;
   let considered = 0;
   let alreadyTracked = 0;
+  let retryCount = 0;
   const skipped = { stale: 0, location: 0, experience: 0, salary: 0, excluded: 0, lowFit: 0 };
   const errors = [];
   const matches = [];
 
   for (const source of sources) {
+    const startedAt = Date.now();
+    let sourceMatches = 0;
     try {
-      const jobs = await fetchSource(source);
+      const fetched = await fetchSourceWithRetry(source);
+      retryCount += fetched.attempts - 1;
+      const jobs = fetched.jobs;
       const currentIds = new Set(jobs.map(job => `${job.provider}:${job.externalId}`));
       for (const job of jobs) {
         considered += 1;
@@ -140,6 +169,7 @@ export async function scanSources(env) {
           .bind(id, job.externalId, source.source_table === "sources" ? source.id : null, job.provider, job.company, job.title, job.location, job.workplaceType, job.description.slice(0, 30000), job.applyUrl, job.salaryText, job.publishedAt, match.score, JSON.stringify(match.reasons), JSON.stringify(jobRiskFlags(job)), duplicateKey(job), internship ? "internship" : "full_time").run();
         discovered += result.meta.changes || 0;
         if (result.meta.changes) {
+          sourceMatches += 1;
           matches.push({ id, title: job.title, company: job.company, location: job.location, score: match.score, applyUrl: job.applyUrl });
         } else alreadyTracked += 1;
       }
@@ -155,9 +185,16 @@ export async function scanSources(env) {
         expired += result.meta.changes || 0;
       }
       await env.DB.prepare(`UPDATE ${source.source_table} SET last_scanned_at = CURRENT_TIMESTAMP, last_error = NULL WHERE id = ?`).bind(source.id).run();
+      await env.DB.prepare(`INSERT INTO source_scan_runs (id, source_key, provider, label, status, attempts, jobs_seen, new_matches, duration_ms)
+        VALUES (?, ?, ?, ?, 'success', ?, ?, ?, ?)`)
+        .bind(crypto.randomUUID(), `${source.source_table}:${source.id}`, source.provider, source.label, fetched.attempts, jobs.length, sourceMatches, Date.now() - startedAt).run();
     } catch (error) {
+      retryCount += Math.max(0, (error.attempts || 3) - 1);
       errors.push(`${source.label}: ${error.message}`);
       await env.DB.prepare(`UPDATE ${source.source_table} SET last_error = ? WHERE id = ?`).bind(error.message, source.id).run();
+      await env.DB.prepare(`INSERT INTO source_scan_runs (id, source_key, provider, label, status, attempts, duration_ms, error)
+        VALUES (?, ?, ?, ?, 'failed', ?, ?, ?)`)
+        .bind(crypto.randomUUID(), `${source.source_table}:${source.id}`, source.provider, source.label, error.attempts || 3, Date.now() - startedAt, error.message).run();
     }
   }
 
@@ -166,6 +203,14 @@ export async function scanSources(env) {
 
   await env.DB.prepare("INSERT INTO activity_log (event_type, message, metadata) VALUES ('scan', ?, ?)")
     .bind(`Job scan completed: ${discovered} new matches, ${alreadyTracked} already tracked, ${expired} expired`, JSON.stringify({ discovered, alreadyTracked, expired, considered, skipped, errors })).run();
+  await env.DB.prepare("UPDATE task_runs SET status=?, retry_count=?, last_error=?, metadata=?, completed_at=CURRENT_TIMESTAMP WHERE id=?")
+    .bind(errors.length === sources.length && sources.length ? "failed" : "succeeded", retryCount, errors.join("\n") || null, JSON.stringify({ discovered, considered, scanned: sources.length }), taskId).run();
+  if (discovered || errors.length) {
+    const title = errors.length ? "Job scan completed with source issues" : `${discovered} new match${discovered === 1 ? "" : "es"} found`;
+    const message = errors.length ? `${discovered} matches found. ${errors.length} source${errors.length === 1 ? "" : "s"} failed after retries.` : "Fresh official postings are ready for review.";
+    await env.DB.prepare("INSERT INTO app_notifications (id, type, title, message) VALUES (?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), errors.length ? "warning" : "match", title, message).run();
+  }
   return { discovered, alreadyTracked, expired, considered, skipped, scanned: sources.length, errors, matches };
 }
 

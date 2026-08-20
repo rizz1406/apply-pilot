@@ -12,5 +12,8 @@
   },
   "devDependencies": {
     "wrangler": "^4.28.1"
+  },
+  "dependencies": {
+    "jspdf": "^4.2.1"
   }
 }

@@ -43,10 +43,11 @@ const seedState = {
 
 const navItems = [
   { id: "internships", label: "Early career", glyph: "I" },
-  { id: "today", label: "Review", glyph: "⌂" },
-  { id: "pipeline", label: "Pipeline", glyph: "▥" },
-  { id: "outreach", label: "Outreach", glyph: "✉" },
-  { id: "settings", label: "Settings", glyph: "⚙" }
+  { id: "today", label: "Review", glyph: "R" },
+  { id: "pipeline", label: "Pipeline", glyph: "P" },
+  { id: "outreach", label: "Outreach", glyph: "O" },
+  { id: "health", label: "Health", glyph: "H" },
+  { id: "settings", label: "Settings", glyph: "S" }
 ];
 
 let state = loadState();
@@ -89,11 +90,11 @@ function mapRemote(data) {
   }));
   const stageMap = { approved: "approved", prepared: "prepared", applied: "applied", outreach: "outreach", interview: "interview", offer: "interview", rejected: "closed", withdrawn: "closed" };
   state.applications = data.applications.map(item => ({ id: item.id, title: item.title, company: item.company, stage: stageMap[item.stage] || "prepared", updated: item.updated_at, submittedAt: item.submitted_at, score: item.score, applyUrl: item.apply_url, rawStage: item.stage, opportunityType: item.opportunity_type || "full_time",
-    tailoredResumeId: item.tailored_resume_id, tailoredResume: parseJson(item.tailored_resume_json, null), resumeAudit: parseJson(item.resume_audit_json, null), keywordCoverage: parseJson(item.keyword_coverage, null), tailoredScore: item.tailored_match_score, latex: item.latex_content, tailoredStatus: item.tailored_status, coverLetter: item.cover_letter }));
+    tailoredResumeId: item.tailored_resume_id, tailoredResume: parseJson(item.tailored_resume_json, null), resumeAudit: parseJson(item.resume_audit_json, null), keywordCoverage: parseJson(item.keyword_coverage, null), tailoredScore: item.tailored_match_score, latex: item.latex_content, tailoredStatus: item.tailored_status, tailoredModel: item.tailored_model, coverLetter: item.cover_letter }));
   state.outreach = data.outreach.map(item => ({
     id: item.id, applicationId: item.application_id, name: item.recruiter_name || "Recruiter not assigned", email: item.recruiter_email || "",
     company: item.company, role: item.role, subject: item.subject, body: item.body, status: item.status,
-    label: item.status, timing: item.sent_at || item.scheduled_for || item.updated_at || "Not scheduled"
+    label: ["draft", "approved"].includes(item.status) && item.scheduled_for && new Date(item.scheduled_for) <= new Date() ? "due" : item.status, timing: item.sent_at || item.scheduled_for || item.updated_at || "Not scheduled"
   }));
   state.activity = data.activity.map(item => ({ text: item.message, time: item.created_at }));
   state.sources = data.sources || [];
@@ -103,6 +104,15 @@ function mapRemote(data) {
   state.contacts = data.contacts || [];
   state.answers = data.answers || [];
   state.interviews = data.interviews || [];
+  state.evidence = (data.evidence || []).map(item => ({ ...item, details: parseJson(item.details_json, {}) }));
+  state.resumeVersions = (data.resumeVersions || []).map(item => ({ ...item, changeSummary: parseJson(item.change_summary, {}) }));
+  state.checklist = data.checklist || [];
+  state.sourceHealth = data.sourceHealth || [];
+  state.taskRuns = data.taskRuns || [];
+  state.notifications = data.notifications || [];
+  state.evaluation = data.evaluation || null;
+  state.documentVersions = data.documentVersions || [];
+  state.authMode = data.authMode || "token";
   if (data.profile?.full_name) {
     state.profile = { fullName: data.profile.full_name, email: data.profile.email, currentTitle: data.profile.current_title, homeLocation: data.profile.home_location, targetSalary: data.profile.target_salary, stretchSalary: data.profile.stretch_salary };
   }
@@ -170,6 +180,7 @@ function counts() {
     internships: state.jobs.filter(job => job.status === "new" && job.opportunityType === "internship").length,
     pipeline: state.applications.filter(item => item.stage !== "closed").length,
     outreach: state.outreach.filter(item => item.status !== "sent").length,
+    health: (state.sources || []).filter(source => source.last_error).length,
     settings: ""
   };
 }
@@ -192,7 +203,7 @@ function renderNav(activeView) {
 }
 
 function render() {
-  const titles = { today: "Review jobs", internships: "Early Career & Internships", pipeline: "Application pipeline", outreach: "Recruiter outreach", settings: "Preferences" };
+  const titles = { today: "Review jobs", internships: "Early Career & Internships", pipeline: "Application pipeline", outreach: "Recruiter outreach", health: "System health", settings: "Preferences" };
   const activeView = titles[state.activeView] ? state.activeView : "today";
   document.querySelector("#page-title").textContent = titles[activeView];
   const initials = state.profile.fullName.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase();
@@ -206,13 +217,14 @@ function render() {
   scanToggle.textContent = paused ? "Resume scans" : "Pause scans";
   scanToggle.classList.toggle("danger-button", !paused);
   agentStatus.textContent = paused ? "Scans paused" : "10-min scan active";
-  action.textContent = activeView === "today" || activeView === "internships" ? "Run job scan" : activeView === "settings" ? "Save changes" : "Add item";
+  action.textContent = activeView === "today" || activeView === "internships" ? "Run job scan" : activeView === "settings" ? "Save changes" : activeView === "health" ? "Run checks" : "Add item";
   renderNav(activeView);
   const viewRenderers = {
     today: renderToday,
     internships: renderInternships,
     pipeline: renderPipeline,
     outreach: renderOutreach,
+    health: renderHealth,
     settings: renderSettings
   };
   try {
@@ -331,8 +343,22 @@ function renderOutreach() {
   const pending = state.outreach.filter(item => item.status === "draft" || item.status === "approved").length;
   app.innerHTML = `<div class="section-heading"><div><h2>Email queue</h2><p>${pending ? `${pending} follow-up${pending === 1 ? "" : "s"} awaiting approval` : "Follow-ups stop automatically when a recruiter replies"}</p></div></div>
     <section class="panel outreach-wrap"><table class="outreach-table"><thead><tr><th>Contact</th><th>Opportunity</th><th>Status</th><th>Timing</th><th></th></tr></thead><tbody>
-      ${state.outreach.length ? state.outreach.map(item => `<tr><td class="contact-cell"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.email || item.company)}</span></td><td>${escapeHtml(item.role)}</td><td><span class="status ${escapeHtml(item.status)}">${escapeHtml(item.label)}</span></td><td>${escapeHtml(item.timing)}</td><td>${["draft", "approved"].includes(item.status) ? `<button class="primary-button compact-button" data-action="approve-send-followup" data-id="${escapeHtml(item.id)}">Approve & send</button>` : `<button class="text-button" data-action="outreach" data-id="${escapeHtml(item.id)}">View</button>`}</td></tr>`).join("") : `<tr><td colspan="5" class="empty-row">No recruiter follow-ups yet. Create one from a prepared application.</td></tr>`}
+      ${state.outreach.length ? state.outreach.map(item => `<tr><td class="contact-cell"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.email || item.company)}</span></td><td>${escapeHtml(item.role)}</td><td><span class="status ${escapeHtml(item.label)}">${escapeHtml(item.label)}</span></td><td>${escapeHtml(item.timing)}</td><td><div class="table-actions">${["draft", "approved"].includes(item.status) ? `<button class="primary-button compact-button" data-action="approve-send-followup" data-id="${escapeHtml(item.id)}">Approve & send</button><button class="text-button danger-button" data-action="cancel-followup" data-id="${escapeHtml(item.id)}">Cancel</button>` : `<button class="text-button" data-action="outreach" data-id="${escapeHtml(item.id)}">View</button>`}</div></td></tr>`).join("") : `<tr><td colspan="5" class="empty-row">No recruiter follow-ups yet. Create one from a prepared application.</td></tr>`}
     </tbody></table></section>`;
+}
+
+function renderHealth() {
+  const runs = state.sourceHealth || [];
+  const latestBySource = runs.filter((run, index) => runs.findIndex(candidate => candidate.source_key === run.source_key) === index);
+  const healthy = latestBySource.filter(run => run.status === "success").length;
+  const failed = latestBySource.filter(run => run.status === "failed").length;
+  const lastTask = (state.taskRuns || [])[0];
+  const evaluation = state.evaluation;
+  const sourceRows = latestBySource.length ? latestBySource.map(run => `<article class="health-row"><div><strong>${escapeHtml(run.label)}</strong><small>${escapeHtml(run.provider)} | ${escapeHtml(run.created_at)}</small></div><span class="status ${run.status === "success" ? "sent" : "due"}">${escapeHtml(run.status)}</span><span>${run.jobs_seen} checked</span><span>${run.duration_ms} ms</span><small>${escapeHtml(run.error || `${run.new_matches} new matches`)}</small></article>`).join("") : `<div class="empty-state"><h2>No scan telemetry yet</h2><p>Run a job scan to record source response time, retries, and failures.</p></div>`;
+  app.innerHTML = `<section class="summary-grid">${metric("Healthy sources", healthy, "Latest attempt")}${metric("Source issues", failed, "Retried automatically")}${metric("Matching accuracy", evaluation ? `${evaluation.accuracy}%` : "Not run", "Baseline evaluation")}${metric("Document snapshots", (state.documentVersions || []).length, "Immutable history")}</section>
+    <div class="health-grid"><section class="panel"><div class="section-heading"><div><h2>Source health</h2><p>Every official board attempt is timed and retried up to three times.</p></div></div><div class="health-list">${sourceRows}</div></section>
+    <section class="panel health-summary"><h2>Reliability</h2><dl><div><dt>Authentication</dt><dd>${state.authMode === "access" ? "Cloudflare Access" : "Private API token"}</dd></div><div><dt>Last workflow</dt><dd>${escapeHtml(lastTask?.status || "No run")}</dd></div><div><dt>Retries used</dt><dd>${lastTask?.retry_count || 0}</dd></div><div><dt>Offline support</dt><dd>${navigator.onLine ? "Online" : "Offline cache active"}</dd></div></dl><button class="primary-button" data-action="run-evaluation">Run accuracy evaluation</button></section></div>
+    <section class="panel evaluation-panel"><h2>Matching evaluation</h2>${evaluation ? `<p><strong>${evaluation.passed}/${evaluation.total}</strong> labelled cases passed. Precision ${evaluation.precision_score}% and recall ${evaluation.recall_score}%.</p><p class="job-company">This tests matching logic against known positive and negative roles. It is a regression signal, not a promise of recruiter response.</p>` : `<p class="job-company">No evaluation has been run against the current matching rules.</p>`}</section>`;
 }
 
 function renderSettings() {
@@ -369,6 +395,10 @@ function renderSettings() {
     </section>
     <section class="panel settings-section" style="grid-column:1/-1"><h2>Resume variants</h2><div class="job-list">${(state.resumeVariants || []).map(variant => `<div class="toggle-row"><span><strong>${escapeHtml(variant.name)}</strong><small>${escapeHtml(variant.target_titles)}</small></span><span class="badge">${escapeHtml(variant.filename)}</span></div>`).join("") || `<p class="job-company">No variants configured.</p>`}</div></section>
     <section class="panel settings-section" style="grid-column:1/-1"><h2>Application answer library</h2><p class="job-company">Save verified answers for protected application forms. Copy them into official portals; ApplyPilot does not auto-submit forms.</p><div class="settings-grid">${[{ key: "notice_period", label: "Notice period" }, { key: "expected_ctc", label: "Expected CTC" }, { key: "work_authorization", label: "Work authorization" }, { key: "linkedin", label: "LinkedIn URL" }, { key: "portfolio", label: "Portfolio URL" }].map(field => { const answer = (state.answers || []).find(item => item.key === field.key) || {}; return `<div class="field"><label for="answer-${field.key}">${field.label}</label><input id="answer-${field.key}" value="${escapeHtml(answer.value || "")}" placeholder="Add your verified answer"></div>`; }).join("")}</div><button class="secondary-button" data-action="save-answers">Save answer library</button></section>
+    <section class="panel settings-section" style="grid-column:1/-1"><div class="section-heading"><div><h2>Verified resume evidence</h2><p>Only confirmed evidence can be added to AI-generated resumes.</p></div></div>
+      <div class="evidence-form"><div class="field"><label for="evidence-type">Type</label><select id="evidence-type"><option value="project">Project</option><option value="experience">Experience</option><option value="certification">Certification</option><option value="skill">Skill</option><option value="achievement">Achievement bullet</option></select></div><div class="field"><label for="evidence-title">Title</label><input id="evidence-title" placeholder="Project, certification, role, or skill"></div><div class="field"><label for="evidence-context">Company, technology, or target entry</label><input id="evidence-context" placeholder="Example: DataBeat or SQL, Power BI"></div><div class="field"><label for="evidence-dates">Dates</label><input id="evidence-dates" placeholder="Example: Aug 2026"></div><div class="field evidence-wide"><label for="evidence-bullets">Verified details</label><textarea id="evidence-bullets" rows="3" placeholder="One truthful bullet per line"></textarea></div><div class="field evidence-wide"><label for="evidence-source">Evidence link or source</label><input id="evidence-source" placeholder="GitHub, credential URL, or user-confirmed"></div></div>
+      <label class="check-row"><input id="evidence-confirmed" type="checkbox"> I confirm this information is accurate and can appear on my resume</label><button class="secondary-button" data-action="add-evidence">Add verified evidence</button>
+      <div class="evidence-list">${(state.evidence || []).map(item => `<article><div><span class="badge ${item.verified ? "new" : ""}">${escapeHtml(item.evidence_type)}</span><strong>${escapeHtml(item.title)}</strong><small>${item.active ? "Available for tailoring" : "Paused"}</small></div><div><button class="text-button" data-action="toggle-evidence" data-id="${escapeHtml(item.id)}" data-active="${item.active ? "0" : "1"}">${item.active ? "Pause" : "Enable"}</button><button class="text-button danger-button" data-action="delete-evidence" data-id="${escapeHtml(item.id)}">Delete</button></div></article>`).join("") || `<p class="job-company">No additional evidence yet. Your verified master resume remains active.</p>`}</div></section>
   </div>`;
 }
 
@@ -408,11 +438,29 @@ async function handleAction(event) {
   if (action === "add-source") await addSource();
   if (action === "add-preset") await addPreset(event.currentTarget.dataset.preset);
   if (action === "save-answers") await saveAnswerLibrary();
+  if (action === "add-evidence") await addEvidence();
+  if (action === "toggle-evidence") await toggleEvidence(id, event.currentTarget.dataset.active === "1");
+  if (action === "delete-evidence") await deleteEvidence(id);
   if (action === "delete-source") await deleteSource(id);
   if (action === "toggle-intern-summary") toggleInternSummary(id);
   if (action === "export-data") await exportData();
   if (action === "review-pack") showApplicationPack(id);
   if (action === "approve-send-followup") await approveAndSendFollowup(id);
+  if (action === "cancel-followup") await cancelFollowup(id);
+  if (action === "run-evaluation") {
+    try {
+      operationOverlay.querySelector("#operation-title").textContent = "Testing matching accuracy";
+      operationOverlay.querySelector("#operation-detail").textContent = "Running labelled positive and negative job cases.";
+      operationOverlay.hidden = false;
+      await api("/evaluations/run", { method: "POST" });
+      await connectBackend();
+      toast("Accuracy evaluation completed.");
+    } catch (error) {
+      toast(error.message, { title: "Evaluation failed", tone: "error" });
+    } finally {
+      operationOverlay.hidden = true;
+    }
+  }
 }
 
 function downloadText(filename, content, type) {
@@ -428,11 +476,24 @@ function showApplicationPack(id) {
   const audit = item.resumeAudit || {};
   const coverage = item.keywordCoverage || {};
   const resumeApproved = item.tailoredStatus === "approved" || item.rawStage === "approved";
+  const modelLabel = item.tailoredModel?.includes("llama-3.3") ? "Llama 3.3 70B" : item.tailoredModel === "deterministic-fallback" ? "AI fallback" : item.tailoredModel || "Provider unavailable";
+  const versions = (state.resumeVersions || []).filter(version => String(version.application_id) === String(item.id)).sort((a, b) => b.version_number - a.version_number);
+  const documentVersions = (state.documentVersions || []).filter(version => String(version.application_id) === String(item.id));
+  const checklist = (state.checklist || []).filter(entry => String(entry.application_id) === String(item.id));
+  const readiness = versions[0]?.changeSummary?.atsReadiness || { score: audit.verdict === "pass" && (coverage.pct == null || coverage.pct >= 60) ? 100 : 67, checks: [{ pass: Boolean(item.tailoredResume.email && item.tailoredResume.phone) }, { pass: audit.verdict === "pass" }, { pass: coverage.pct == null || coverage.pct >= 60 }] };
+  const versionMarkup = versions.length ? versions.map(version => `<article><div><strong>Version ${version.version_number}</strong><small>${escapeHtml(version.instruction || "Generated for JD")}</small><small>${escapeHtml(version.changeSummary?.summary || "Saved resume snapshot")}</small></div>${version === versions[0] ? `<span class="badge new">CURRENT</span>` : `<button class="text-button" data-restore-version="${version.version_number}">Restore</button>`}</article>`).join("") : `<p class="job-company">Version history starts after the next regeneration.</p>`;
+  const checklistMarkup = checklist.length ? checklist.map(entry => `<label class="workflow-check"><input type="checkbox" data-checklist-key="${escapeHtml(entry.item_key)}" ${entry.completed ? "checked" : ""}> <span>${escapeHtml(entry.label)}</span>${entry.required ? `<small>Required</small>` : ""}</label>`).join("") : `<p class="job-company">Checklist will appear after this pack is refreshed.</p>`;
+  const answerMarkup = (state.answers || []).filter(answer => answer.value).map(answer => `<button class="answer-copy" data-copy-answer="${escapeHtml(answer.value)}"><span>${escapeHtml(answer.label)}</span><strong>${escapeHtml(answer.value)}</strong></button>`).join("") || `<p class="job-company">Add verified screening answers in Settings.</p>`;
   dialog.className = "pack-modal";
-  dialog.innerHTML = `<div class="dialog-content pack-dialog"><div class="dialog-header"><div><span class="badge new">${item.tailoredScore || 0}% TAILORED</span><h2>${escapeHtml(item.title)}</h2><p class="job-company">${escapeHtml(item.company)} · ${escapeHtml(item.tailoredStatus || "review")}</p></div><button class="dialog-close" aria-label="Close">x</button></div>
+  dialog.innerHTML = `<div class="dialog-content pack-dialog"><div class="dialog-header"><div><span class="badge new">${item.tailoredScore || 0}% TAILORED</span><h2>${escapeHtml(item.title)}</h2><p class="job-company">${escapeHtml(item.company)} | ${escapeHtml(item.tailoredStatus || "review")} | ${escapeHtml(modelLabel)}</p></div><button class="dialog-close" aria-label="Close">x</button></div>
     <div class="pack-grid"><section><h3>ATS coverage</h3><strong class="pack-score">${coverage.pct ?? "-"}%</strong><p class="job-company">Matched: ${escapeHtml((coverage.matched || []).join(", ") || "No tracked keywords")}</p><p class="job-company">Missing: ${escapeHtml((coverage.missing || []).join(", ") || "None")}</p></section><section><h3>Truth audit</h3><strong>${escapeHtml(audit.verdict || "review")}</strong><p class="job-company">${Number(audit.autoCorrected || 0)} grounded corrections applied</p><p class="job-company">${escapeHtml((audit.qualityIssues || []).join(" ") || "No quality issues detected")}</p></section></div>
     <div class="match-reasons"><h3>Tailored summary</h3><p>${escapeHtml(item.tailoredResume.summary)}</p><h3>Prioritized skills</h3><p>${escapeHtml(item.tailoredResume.skills)}</p></div>
     <div class="match-reasons"><h3>Cover letter</h3><p class="prewrap">${escapeHtml(item.coverLetter || "Not generated")}</p></div>
+    <section class="resume-command"><div><h3>Revise this resume</h3><p>Describe what to prioritize or add. Only verified master resume and Evidence Library facts are allowed.</p></div><textarea id="resume-instruction" rows="3" maxlength="600" placeholder="Example: Prioritize my BigQuery pipeline work and add my verified dbt project."></textarea><button class="primary-button" id="regenerate-resume">Create new version</button></section>
+    <div class="workflow-grid"><section><div class="workflow-heading"><h3>ATS readiness</h3><strong>${readiness.score}%</strong></div><p class="job-company">${readiness.checks?.filter(check => check.pass).length || 0}/${readiness.checks?.length || 0} automated checks passed. PDF generation also blocks multi-page overflow.</p></section><section><h3>Application checklist</h3><div class="workflow-list">${checklistMarkup}</div></section></div>
+    <details class="workflow-details"><summary>Resume versions (${versions.length})</summary><div class="version-list">${versionMarkup}</div></details>
+    <details class="workflow-details"><summary>Complete document history (${documentVersions.length})</summary><div class="version-list">${documentVersions.map(version => `<article><div><strong>${escapeHtml(version.kind.replace("_", " "))} v${version.version_number}</strong><small>${escapeHtml(version.created_at)}</small></div><span class="badge">${escapeHtml(version.mime_type)}</span></article>`).join("") || `<p class="job-company">No immutable document snapshots yet.</p>`}</div></details>
+    <details class="workflow-details"><summary>Screening answer library</summary><div class="answer-list">${answerMarkup}</div></details>
     <div class="dialog-actions"><button class="secondary-button" id="view-resume">View resume</button><button class="secondary-button" id="download-json">Resume JSON</button><button class="secondary-button" id="download-tex">LaTeX</button><button class="secondary-button" id="download-pdf">Download PDF</button><button class="secondary-button" id="open-application">Open application</button><button class="secondary-button" id="mark-applied">Mark applied</button>${resumeApproved ? `<span class="approval-note">Resume approved</span>` : `<button class="primary-button" id="approve-tailored">Approve resume</button>`}</div>
     <button class="text-button pack-followup" id="prepare-interview">Create interview workspace</button>
     <button class="text-button pack-followup" id="create-followup">Create recruiter follow-up</button></div>`;
@@ -440,8 +501,32 @@ function showApplicationPack(id) {
   dialog.querySelector(".dialog-close").onclick = () => dialog.close();
   dialog.querySelector("#view-resume").onclick = () => showResumePreview(item);
   dialog.querySelector("#download-json").onclick = () => downloadText(`${item.company}-${item.title}.json`.replace(/[^a-z0-9.-]+/gi, "_"), JSON.stringify(item.tailoredResume, null, 2), "application/json");
-  dialog.querySelector("#download-tex").onclick = () => downloadText(`${item.company}-${item.title}.tex`.replace(/[^a-z0-9.-]+/gi, "_"), buildAtsLatex(item.tailoredResume, item), "application/x-latex");
+  dialog.querySelector("#download-tex").onclick = () => downloadText(`${item.company}-${item.title}.tex`.replace(/[^a-z0-9.-]+/gi, "_"), item.latex || buildAtsLatex(item.tailoredResume, item), "application/x-latex");
   dialog.querySelector("#download-pdf").onclick = () => downloadResumePdf(item);
+  dialog.querySelector("#regenerate-resume").onclick = async () => {
+    const instruction = dialog.querySelector("#resume-instruction").value.trim();
+    operationOverlay.querySelector("#operation-title").textContent = `Tailoring ${item.company} resume`;
+    operationOverlay.querySelector("#operation-detail").textContent = "Workers AI is comparing the full JD with your verified experience, then running truth and ATS checks.";
+    operationOverlay.hidden = false;
+    dialog.close();
+    try {
+      const result = await api(`/applications/${encodeURIComponent(item.id)}/regenerate-resume`, { method: "POST", body: JSON.stringify({ instruction }) });
+      await connectBackend();
+      const refreshed = state.applications.find(application => String(application.id) === String(item.id));
+      if (refreshed) showApplicationPack(refreshed.id);
+      toast(`Version ${result.version} created. ${result.diff?.summary || "ATS and truth checks completed"} Readiness: ${result.readiness?.score ?? "-"}%.`, { title: "Tailored resume ready", duration: 6000 });
+    } catch (error) { toast(error.message, { title: "Regeneration failed", tone: "error" }); }
+    finally { operationOverlay.hidden = true; }
+  };
+  dialog.querySelectorAll("[data-restore-version]").forEach(button => button.onclick = async () => {
+    try { await api(`/applications/${encodeURIComponent(item.id)}/resume-versions/${button.dataset.restoreVersion}/restore`, { method: "POST" }); dialog.close(); await connectBackend(); showApplicationPack(item.id); toast(`Resume version ${button.dataset.restoreVersion} restored as a new version.`); }
+    catch (error) { toast(error.message, { title: "Restore failed", tone: "error" }); }
+  });
+  dialog.querySelectorAll("[data-checklist-key]").forEach(input => input.onchange = async () => {
+    try { await api(`/applications/${encodeURIComponent(item.id)}/checklist/${encodeURIComponent(input.dataset.checklistKey)}`, { method: "PUT", body: JSON.stringify({ completed: input.checked }) }); await connectBackend(); }
+    catch (error) { input.checked = !input.checked; toast(error.message, { tone: "error" }); }
+  });
+  dialog.querySelectorAll("[data-copy-answer]").forEach(button => button.onclick = async () => { await navigator.clipboard.writeText(button.dataset.copyAnswer); toast("Verified answer copied."); });
   dialog.querySelector("#open-application").onclick = () => window.open(item.applyUrl, "_blank", "noopener,noreferrer");
   dialog.querySelector("#mark-applied").onclick = async () => {
     try { await api(`/applications/${encodeURIComponent(item.id)}/stage`, { method: "PUT", body: JSON.stringify({ stage: "applied" }) }); dialog.close(); await connectBackend(); toast("Application marked as applied."); }
@@ -455,7 +540,7 @@ function showApplicationPack(id) {
   dialog.querySelector("#prepare-interview").onclick = () => createInterviewWorkspace(item);
 }
 
-function downloadResumePdf(item) {
+function downloadResumePdfLegacy(item) {
   const resume = item.tailoredResume;
   const escapePdf = value => String(value || "").replace(/[^\x20-\x7E]/g, " ").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
   const wrap = (value, width = 101) => String(value || "").replace(/[^\x20-\x7E]/g, " ").split(/\s+/).reduce((lines, word) => {
@@ -493,7 +578,7 @@ function downloadResumePdf(item) {
     y -= 2;
   };
   const addBullets = bullets => (bullets || []).forEach(bullet => wrap(`- ${bullet}`, 97).forEach((line, index) => add(line, { x: index ? left + 10 : left + 6, gap: 10 })));
-  add(resume.name || state.profile.fullName, { size: 18, bold: true, align: "center", gap: 16 });
+  add(String(resume.name || state.profile.fullName).toUpperCase(), { size: 18, bold: true, align: "center", gap: 16 });
   add(resume.title || item.title, { size: 10, bold: true, align: "center", gap: 12 });
   add([resume.phone, resume.location].filter(Boolean).join(" | "), { size: 8.5, align: "center", gap: 10 });
   const contactParts = [resume.email, resume.linkedin ? "LinkedIn" : "", resume.website ? "Portfolio Website" : ""].filter(Boolean);
@@ -511,7 +596,12 @@ function downloadResumePdf(item) {
     linkX += partWidth + (index < contactParts.length - 1 ? 3 * contactSize * .49 : 0);
   });
   section("Summary"); wrap(resume.summary).forEach(line => add(line, { gap: 10 }));
-  section("Skills"); wrap(resume.skills).forEach(line => add(line, { gap: 10 }));
+  section("Skills");
+  if ((resume.skillsStructured || []).length) (resume.skillsStructured || []).forEach(item => {
+    add(item.category, { bold: true, gap: 10 });
+    wrap(item.details, 82).forEach(line => add(line, { x: left + 82, gap: 10 }));
+  });
+  else wrap(resume.skills).forEach(line => add(line, { gap: 10 }));
   section("Professional Experience");
   (resume.experienceStructured || []).forEach(entry => {
     addPair(entry.role || "", entry.dates || "", { bold: true, gap: 10 });
@@ -527,7 +617,7 @@ function downloadResumePdf(item) {
     (resume.educationStructured || []).forEach(entry => { addPair(`${entry.degree || ""}${entry.school ? `, ${entry.school}` : ""}`, entry.dates || "", { bold: true, gap: 10 }); if (entry.location) add(entry.location, { size: 8.4, gap: 10 }); });
     (resume.certificationsStructured || []).forEach(entry => add(entry.name || entry, { gap: 10 }));
   }
-  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"];
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>"];
   const pageIds = pages.map((_, index) => 5 + index * 2);
   const annotationStart = 5 + pages.length * 2;
   const pageAnnotations = pages.map((_, index) => links.filter(link => link.page === index));
@@ -551,10 +641,114 @@ function downloadResumePdf(item) {
   downloadText(`${item.company}-${item.title}.pdf`.replace(/[^a-z0-9.-]+/gi, "_"), pdf, "application/pdf");
 }
 
+let pdfFontCache;
+async function loadPdfFonts() {
+  if (!pdfFontCache) pdfFontCache = Promise.all([
+    ["CMUSerif-Regular.ttf", "fonts/cmu-serif-500-roman.ttf", "normal"],
+    ["CMUSerif-Bold.ttf", "fonts/cmu-serif-700-roman.ttf", "bold"],
+    ["CMUSerif-Italic.ttf", "fonts/cmu-serif-500-italic.ttf", "italic"],
+    ["CMUSerif-BoldItalic.ttf", "fonts/cmu-serif-700-italic.ttf", "bolditalic"]
+  ].map(async ([name, url, style]) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Resume font failed to load (${response.status})`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    let binary = "";
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    return { name, style, data: btoa(binary) };
+  }));
+  return pdfFontCache;
+}
+
+async function downloadResumePdf(item) {
+  const resume = item.tailoredResume;
+  if (!window.jspdf?.jsPDF) return toast("The PDF engine did not load. Refresh the page and try again.", { title: "PDF unavailable", tone: "error" });
+  operationOverlay.querySelector("#operation-title").textContent = "Creating LaTeX-style PDF";
+  operationOverlay.querySelector("#operation-detail").textContent = "Embedding Computer Modern fonts, links, and the complete resume content.";
+  operationOverlay.hidden = false;
+  try {
+    const fonts = await loadPdfFonts();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: "pt", format: "letter", compress: true, putOnlyUsedFonts: true });
+    fonts.forEach(font => { doc.addFileToVFS(font.name, font.data); doc.addFont(font.name, "CMU Serif", font.style); });
+    const pageWidth = 612;
+    const pageHeight = 792;
+    const left = 32.4;
+    const right = pageWidth - 32.4;
+    const contentWidth = right - left;
+    let y = 31;
+    const setFont = (style = "normal", size = 10.5, color = [0, 0, 0]) => { doc.setFont("CMU Serif", style); doc.setFontSize(size); doc.setTextColor(...color); };
+    const ensure = height => { if (y + height <= pageHeight - 22) return; doc.addPage("letter", "portrait"); y = 28; };
+    const lines = (value, width, style = "normal", size = 10.5) => { setFont(style, size); return doc.splitTextToSize(String(value || ""), width); };
+    const block = (value, { x = left, width = contentWidth, style = "normal", size = 10.5, lineHeight = 11.8, color = [0, 0, 0] } = {}) => {
+      const output = lines(value, width, style, size); ensure(output.length * lineHeight); setFont(style, size, color); doc.text(output, x, y); y += output.length * lineHeight; return output;
+    };
+    const centered = (value, style, size, gap) => { ensure(gap); setFont(style, size); doc.text(String(value || ""), pageWidth / 2, y, { align: "center" }); y += gap; };
+    const rightText = (value, style = "normal", size = 10) => { setFont(style, size); doc.text(String(value || ""), right, y, { align: "right" }); };
+    const section = label => { y += 5; ensure(16); setFont("bold", 11); doc.text(label.toUpperCase(), left, y); doc.setDrawColor(50); doc.setLineWidth(.45); doc.line(left, y + 2.8, right, y + 2.8); y += 13; };
+    const linkedText = (label, url, x, style = "normal", size = 10.2) => {
+      setFont(style, size, [0, 0, 255]); doc.text(label, x, y); const width = doc.getTextWidth(label);
+      if (url) doc.link(x, y - size, width, size + 2, { url });
+      return width;
+    };
+    const bullets = values => (values || []).forEach(value => {
+      const bulletLines = lines(value, contentWidth - 19, "normal", 9.9); ensure(bulletLines.length * 11.5);
+      setFont("normal", 9.9); doc.text("•", left + 5, y); doc.text(bulletLines, left + 15, y); y += bulletLines.length * 11.5;
+    });
+
+    centered(String(resume.name || state.profile.fullName).toUpperCase(), "bold", 17.3, 17);
+    centered(resume.title || item.title, "normal", 10.1, 12);
+    centered([resume.phone, resume.location].filter(Boolean).join(" | "), "normal", 9.1, 10.5);
+    const contacts = [
+      { label: resume.email, url: resume.email ? `mailto:${resume.email}` : "" },
+      { label: "LinkedIn", url: resume.linkedin },
+      { label: "Portfolio Website", url: resume.website }
+    ].filter(entry => entry.label);
+    setFont("normal", 9.1); const separator = " | "; const contactWidth = contacts.reduce((sum, entry) => sum + doc.getTextWidth(entry.label), 0) + Math.max(0, contacts.length - 1) * doc.getTextWidth(separator);
+    let contactX = (pageWidth - contactWidth) / 2;
+    contacts.forEach((entry, index) => { contactX += linkedText(entry.label, entry.url, contactX); if (index < contacts.length - 1) { setFont("normal", 9.1); doc.text(separator, contactX, y); contactX += doc.getTextWidth(separator); } });
+    y += 12;
+
+    section("Summary"); block(resume.summary, { size: 10.35, lineHeight: 11.5 });
+    section("Skills");
+    if ((resume.skillsStructured || []).length) (resume.skillsStructured || []).forEach(row => {
+      const categoryWidth = 122; const detailLines = lines(row.details, contentWidth - categoryWidth, "normal", 9.65); ensure(detailLines.length * 10.5);
+      setFont("bold", 9.65); doc.text(row.category, left, y); setFont("normal", 9.65); doc.text(detailLines, left + categoryWidth, y); y += detailLines.length * 10.5;
+    }); else block(resume.skills, { size: 10, lineHeight: 11 });
+
+    section("Professional Experience");
+    (resume.experienceStructured || []).forEach((entry, index) => {
+      if (index) y += 5; ensure(31); setFont("bold", 10.6); doc.text(entry.role || "", left, y); rightText(entry.dates || "", "normal", 10); y += 12.3;
+      setFont("bold", 9.9); doc.text(entry.company || "", left, y); rightText(entry.location || "", "italic", 9.9); y += 12; bullets(entry.bullets);
+    });
+
+    section("Projects");
+    (resume.projectsStructured || []).forEach((entry, index) => {
+      if (index) y += 2.5; ensure(22); linkedText(entry.name || "", entry.link, left, "bold", 10.2); rightText([entry.tech, entry.date].filter(Boolean).join(", "), "italic", 9.8); y += 11.1; bullets(entry.bullets);
+    });
+
+    section("Education & Certifications");
+    (resume.educationStructured || []).forEach(entry => {
+      ensure(21); setFont("bold", 10.2); doc.text(`${entry.degree || ""}${entry.school ? `, ${entry.school}` : ""}`, left, y); rightText(entry.dates || "", "normal", 9.8); y += 10.9;
+      if (entry.location) { setFont("italic", 9.8); doc.text(entry.location, left, y); y += 10.7; }
+    });
+    const certs = resume.certificationsStructured || [];
+    if (certs.length) certs.forEach((entry, index) => {
+      ensure(11.2); setFont("normal", 9.5); doc.text("•", left + 5, y); linkedText(entry.name || entry, entry.link, left + 15, "normal", 9.5);
+      if (index === 0 && resume.certificationDate) rightText(resume.certificationDate, "italic", 9.5);
+      y += 11.2;
+    });
+    if (doc.getNumberOfPages() > 1) throw new Error("This resume exceeds one page. Shorten or deactivate optional evidence before downloading.");
+    doc.setProperties({ title: `${item.company} - ${item.title}`, author: resume.name || state.profile.fullName, subject: "ATS-friendly tailored resume" });
+    doc.save(`${item.company}-${item.title}.pdf`.replace(/[^a-z0-9.-]+/gi, "_"));
+    toast("PDF downloaded with Computer Modern fonts and clickable links.", { title: "Resume ready" });
+  } catch (error) { toast(error.message, { title: "PDF generation failed", tone: "error" }); }
+  finally { operationOverlay.hidden = true; }
+}
+
 function buildAtsLatex(resume, item) {
   const esc = value => String(value || "").replace(/\\/g, "\\textbackslash{}").replace(/([#$%&_{}])/g, "\\$1").replace(/~/g, "\\textasciitilde{}").replace(/\^/g, "\\textasciicircum{}");
   const lines = [
-    "\\documentclass{resume}", "\\usepackage[left=0.4in,top=0.4in,right=0.4in,bottom=0.4in]{geometry}", "\\usepackage{hyperref}", "\\hypersetup{colorlinks=true,urlcolor=blue}",
+    "\\documentclass{resume}", "\\usepackage[left=0.45in,top=0.3in,right=0.45in,bottom=0.3in]{geometry}", "\\usepackage{hyperref}", "\\hypersetup{colorlinks=true,urlcolor=blue}",
     `\\name{${esc(resume.name || state.profile.fullName)}}`,
     `\\address{${esc(resume.phone || "")} \\\\ ${esc(resume.location || "Hyderabad, Telangana")}}`,
     `\\address{\\href{mailto:${esc(resume.email || "")}}{${esc(resume.email || "")}} \\\\ \\href{${esc(resume.linkedin || "")}}{LinkedIn} \\\\ \\href{${esc(resume.website || "")}}{Portfolio Website}}`,
@@ -563,19 +757,20 @@ function buildAtsLatex(resume, item) {
   ];
   (resume.experienceStructured || []).forEach(entry => { lines.push(`\\textbf{${esc(entry.role)}} \\hfill ${esc(entry.dates)}\\\\`, `${esc(entry.company)} \\hfill \\textit{${esc(entry.location)}}`, "\\begin{itemize}", ...(entry.bullets || []).map(bullet => `\\item ${esc(bullet)}`), "\\end{itemize}", "\\vspace{2pt}"); });
   lines.push("\\end{rSection}");
-  if ((resume.projectsStructured || []).length) { lines.push("\\vspace{-8pt}", "\\begin{rSection}{Projects}"); (resume.projectsStructured || []).forEach(entry => { lines.push(`\\item \\textbf{${esc(entry.name)}} \\hfill \\textit{${esc(entry.tech)}}`, "\\begin{itemize}", ...(entry.bullets || []).map(bullet => `\\item ${esc(bullet)}`), "\\end{itemize}"); }); lines.push("\\end{rSection}"); }
-  if ((resume.educationStructured || []).length || (resume.certificationsStructured || []).length) { lines.push("\\vspace{-8pt}", "\\begin{rSection}{Education \\& Certifications}"); (resume.educationStructured || []).forEach(entry => lines.push(`\\textbf{${esc(entry.degree)}}, ${esc(entry.school)} \\hfill ${esc(entry.dates)}\\\\`, `\\textit{${esc(entry.location)}}`)); (resume.certificationsStructured || []).forEach(entry => lines.push(`\\item ${esc(entry.name)}`)); lines.push("\\end{rSection}"); }
+  if ((resume.projectsStructured || []).length) { lines.push("\\vspace{-8pt}", "\\begin{rSection}{Projects}"); (resume.projectsStructured || []).forEach(entry => { const projectName = entry.link ? `\\href{${esc(entry.link)}}{${esc(entry.name)}}` : esc(entry.name); lines.push(`\\item \\textbf{${projectName}} \\hfill \\textit{${esc(entry.tech)}}`, "\\begin{itemize}", ...(entry.bullets || []).map(bullet => `\\item ${esc(bullet)}`), "\\end{itemize}"); }); lines.push("\\end{rSection}"); }
+  if ((resume.educationStructured || []).length || (resume.certificationsStructured || []).length) { lines.push("\\vspace{-8pt}", "\\begin{rSection}{Education \\& Certifications}"); (resume.educationStructured || []).forEach(entry => lines.push(`\\textbf{${esc(entry.degree)}}, ${esc(entry.school)} \\hfill ${esc(entry.dates)}\\\\`, `\\textit{${esc(entry.location)}}`)); if ((resume.certificationsStructured || []).length) { lines.push("\\begin{itemize}"); (resume.certificationsStructured || []).forEach(entry => lines.push(`\\item ${entry.link ? `\\href{${esc(entry.link)}}{${esc(entry.name)}}` : esc(entry.name)}`)); lines.push("\\end{itemize}"); } lines.push("\\end{rSection}"); }
   lines.push("\\end{document}");
   return lines.join("\n");
 }
 
 function showResumePreview(item) {
   const resume = item.tailoredResume;
-  const role = entry => `<section class="resume-entry"><h4>${escapeHtml(entry.role)} <small>${escapeHtml(entry.dates)}</small></h4><p>${escapeHtml(entry.company)}${entry.location ? ` <span>|</span> ${escapeHtml(entry.location)}` : ""}</p><ul>${(entry.bullets || []).map(bullet => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul></section>`;
-  const project = entry => `<section class="resume-entry"><h4>${escapeHtml(entry.name)} <small>${escapeHtml(entry.tech)}</small></h4><ul>${(entry.bullets || []).map(bullet => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul></section>`;
+  const role = entry => `<section class="resume-entry resume-role"><h4>${escapeHtml(entry.role)} <small>${escapeHtml(entry.dates)}</small></h4><p class="resume-company">${escapeHtml(entry.company)}${entry.location ? ` <em>${escapeHtml(entry.location)}</em>` : ""}</p><ul>${(entry.bullets || []).map(bullet => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul></section>`;
+  const project = entry => `<section class="resume-entry"><h4>${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noreferrer">${escapeHtml(entry.name)}</a>` : escapeHtml(entry.name)} <small>${escapeHtml([entry.tech, entry.date].filter(Boolean).join(", "))}</small></h4><ul>${(entry.bullets || []).map(bullet => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul></section>`;
   const education = entry => `<section class="resume-entry resume-education"><h4>${escapeHtml(entry.degree)}${entry.school ? `, ${escapeHtml(entry.school)}` : ""} <small>${escapeHtml(entry.dates)}</small></h4>${entry.location ? `<p>${escapeHtml(entry.location)}</p>` : ""}</section>`;
   dialog.className = "pack-modal";
-  dialog.innerHTML = `<div class="dialog-content resume-preview"><div class="dialog-header preview-tools"><span class="badge new">TAILORED RESUME</span><button class="dialog-close" aria-label="Close">x</button></div><article class="resume-sheet"><header><h2>${escapeHtml(resume.name || state.profile.fullName)}</h2><strong>${escapeHtml(resume.title || item.title)}</strong><p>${escapeHtml([resume.phone, resume.location].filter(Boolean).join(" | "))}</p><p><a href="mailto:${escapeHtml(resume.email || "")}">${escapeHtml(resume.email || "")}</a>${resume.linkedin ? ` | <a href="${escapeHtml(resume.linkedin)}" target="_blank" rel="noreferrer">LinkedIn</a>` : ""}${resume.website ? ` | <a href="${escapeHtml(resume.website)}" target="_blank" rel="noreferrer">Portfolio Website</a>` : ""}</p></header><section><h3>Summary</h3><p>${escapeHtml(resume.summary)}</p></section><section><h3>Skills</h3><p>${escapeHtml(resume.skills)}</p></section><section><h3>Professional Experience</h3>${(resume.experienceStructured || []).map(role).join("") || "<p>No experience entries.</p>"}</section>${(resume.projectsStructured || []).length ? `<section><h3>Projects</h3>${(resume.projectsStructured || []).map(project).join("")}</section>` : ""}${(resume.educationStructured || []).length || (resume.certificationsStructured || []).length ? `<section><h3>Education &amp; Certifications</h3>${(resume.educationStructured || []).map(education).join("")}${(resume.certificationsStructured || []).map(entry => `<p class="resume-certification">${escapeHtml(entry.name || entry)}</p>`).join("")}</section>` : ""}</article><div class="dialog-actions"><button class="secondary-button" id="back-to-pack">Back</button><button class="primary-button" id="preview-download-pdf">Download PDF</button></div></div>`;
+  const skillRows = (resume.skillsStructured || []).length ? `<div class="resume-skills-table">${resume.skillsStructured.map(row => `<strong>${escapeHtml(row.category)}</strong><span>${escapeHtml(row.details)}</span>`).join("")}</div>` : `<p>${escapeHtml(resume.skills)}</p>`;
+  dialog.innerHTML = `<div class="dialog-content resume-preview"><div class="dialog-header preview-tools"><span class="badge new">TAILORED RESUME</span><button class="dialog-close" aria-label="Close">x</button></div><article class="resume-sheet"><header><h2>${escapeHtml(resume.name || state.profile.fullName)}</h2><strong>${escapeHtml(resume.title || item.title)}</strong><p>${escapeHtml([resume.phone, resume.location].filter(Boolean).join(" | "))}</p><p><a href="mailto:${escapeHtml(resume.email || "")}">${escapeHtml(resume.email || "")}</a>${resume.linkedin ? ` | <a href="${escapeHtml(resume.linkedin)}" target="_blank" rel="noreferrer">LinkedIn</a>` : ""}${resume.website ? ` | <a href="${escapeHtml(resume.website)}" target="_blank" rel="noreferrer">Portfolio Website</a>` : ""}</p></header><section><h3>Summary</h3><p>${escapeHtml(resume.summary)}</p></section><section><h3>Skills</h3>${skillRows}</section><section><h3>Professional Experience</h3>${(resume.experienceStructured || []).map(role).join("") || "<p>No experience entries.</p>"}</section>${(resume.projectsStructured || []).length ? `<section><h3>Projects</h3>${(resume.projectsStructured || []).map(project).join("")}</section>` : ""}${(resume.educationStructured || []).length || (resume.certificationsStructured || []).length ? `<section><h3>Education &amp; Certifications</h3>${(resume.educationStructured || []).map(education).join("")}<ul class="resume-certifications">${(resume.certificationsStructured || []).map((entry, index) => `<li>${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noreferrer">${escapeHtml(entry.name || entry)}</a>` : escapeHtml(entry.name || entry)}${index === 0 && resume.certificationDate ? ` <small>${escapeHtml(resume.certificationDate)}</small>` : ""}</li>`).join("")}</ul></section>` : ""}</article><div class="dialog-actions"><button class="secondary-button" id="back-to-pack">Back</button><button class="primary-button" id="preview-download-pdf">Download PDF</button></div></div>`;
   dialog.querySelector(".dialog-close").onclick = () => dialog.close();
   dialog.querySelector("#back-to-pack").onclick = () => showApplicationPack(item.id);
   dialog.querySelector("#preview-download-pdf").onclick = () => downloadResumePdf(item);
@@ -590,22 +785,52 @@ async function saveAnswerLibrary() {
   try { await api("/application-answers", { method: "PUT", body: JSON.stringify({ answers: fields.map(field => ({ ...field, value: document.querySelector(`#answer-${field.key}`).value.trim(), verified: true })) }) }); await connectBackend(); toast("Answer library saved."); } catch (error) { toast(error.message); }
 }
 
+async function addEvidence() {
+  const evidenceType = document.querySelector("#evidence-type").value;
+  const title = document.querySelector("#evidence-title").value.trim();
+  const context = document.querySelector("#evidence-context").value.trim();
+  const dates = document.querySelector("#evidence-dates").value.trim();
+  const bullets = document.querySelector("#evidence-bullets").value.split("\n").map(value => value.trim()).filter(Boolean);
+  const sourceUrl = document.querySelector("#evidence-source").value.trim() || "user-confirmed";
+  const confirmed = document.querySelector("#evidence-confirmed").checked;
+  if (!title || !confirmed) return toast("Add a title and confirm the evidence is accurate.", { title: "Evidence not saved", tone: "error" });
+  const details = evidenceType === "project" ? { name: title, tech: context, date: dates, link: sourceUrl.startsWith("http") ? sourceUrl : "", bullets }
+    : evidenceType === "experience" ? { role: title, company: context, dates, bullets }
+    : evidenceType === "certification" ? { name: title, date: dates, link: sourceUrl.startsWith("http") ? sourceUrl : "" }
+    : evidenceType === "skill" ? { name: title, category: context || "Additional Skills", details: bullets.join(", ") || title }
+    : { targetType: "experience", targetName: context, bullet: bullets[0] || title };
+  try { await api("/evidence", { method: "POST", body: JSON.stringify({ evidenceType, title, details, sourceUrl, confirmed }) }); await connectBackend(); render(); toast("Verified evidence saved for future resume versions."); }
+  catch (error) { toast(error.message, { title: "Evidence not saved", tone: "error" }); }
+}
+
+async function toggleEvidence(id, active) {
+  try { await api(`/evidence/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ active }) }); await connectBackend(); render(); }
+  catch (error) { toast(error.message, { tone: "error" }); }
+}
+
+async function deleteEvidence(id) {
+  try { await api(`/evidence/${encodeURIComponent(id)}`, { method: "DELETE" }); await connectBackend(); render(); toast("Evidence removed."); }
+  catch (error) { toast(error.message, { tone: "error" }); }
+}
+
 function showFollowupComposer(application) {
   const defaultSubject = `Following up on my ${application.title} application`;
   const defaultBody = `Hello,\n\nI recently applied for the ${application.title} role at ${application.company}. I am following up to reiterate my interest and ask whether there is any additional information I can provide.\n\nThank you for your time,\n${state.profile.fullName}`;
+  const defaultSchedule = new Date(Date.now() + Number(state.settings.followupDays || 5) * 86400000).toISOString().slice(0, 16);
   dialog.innerHTML = `<form class="dialog-content" id="followup-form"><div class="dialog-header"><div><span class="badge new">FOLLOW-UP</span><h2>${escapeHtml(application.title)}</h2><p class="job-company">${escapeHtml(application.company)}</p></div><button type="button" class="dialog-close" aria-label="Close">x</button></div>
     <div class="field"><label for="recruiter-name">Recruiter name</label><input id="recruiter-name" placeholder="Optional"></div>
     <div class="field"><label for="recruiter-email">Recruiter email</label><input id="recruiter-email" type="email" required list="verified-contacts" placeholder="name@company.com"><datalist id="verified-contacts">${(state.contacts || []).map(contact => `<option value="${escapeHtml(contact.email)}">${escapeHtml(contact.name || "Verified contact")}</option>`).join("")}</datalist></div>
     <label class="check-row"><input id="verified-contact" type="checkbox"> I verified this recruiter contact myself</label>
     <div class="field"><label for="followup-subject">Subject</label><input id="followup-subject" required value="${escapeHtml(defaultSubject)}"></div>
     <div class="field"><label for="followup-body">Message</label><textarea id="followup-body" required rows="8">${escapeHtml(defaultBody)}</textarea></div>
+    <div class="field"><label for="followup-schedule">Review/send date</label><input id="followup-schedule" type="datetime-local" value="${defaultSchedule}"><small>The message remains a draft until you approve and send it.</small></div>
     <div class="dialog-actions"><button type="button" class="secondary-button dialog-close-secondary">Cancel</button><button class="primary-button" type="submit">Save follow-up draft</button></div></form>`;
   dialog.querySelector(".dialog-close").onclick = () => dialog.close();
   dialog.querySelector(".dialog-close-secondary").onclick = () => dialog.close();
   dialog.querySelector("#followup-form").onsubmit = async event => {
     event.preventDefault();
     try {
-      await api("/outreach", { method: "POST", body: JSON.stringify({ applicationId: application.id, recruiterName: dialog.querySelector("#recruiter-name").value, recruiterEmail: dialog.querySelector("#recruiter-email").value, subject: dialog.querySelector("#followup-subject").value, body: dialog.querySelector("#followup-body").value, verifiedContact: dialog.querySelector("#verified-contact").checked }) });
+      await api("/outreach", { method: "POST", body: JSON.stringify({ applicationId: application.id, recruiterName: dialog.querySelector("#recruiter-name").value, recruiterEmail: dialog.querySelector("#recruiter-email").value, subject: dialog.querySelector("#followup-subject").value, body: dialog.querySelector("#followup-body").value, scheduledFor: dialog.querySelector("#followup-schedule").value || null, verifiedContact: dialog.querySelector("#verified-contact").checked }) });
       dialog.close(); await connectBackend(); state.activeView = "outreach"; render(); toast("Follow-up draft saved. Approve and send when ready.");
     } catch (error) { toast(error.message); }
   };
@@ -619,6 +844,11 @@ async function approveAndSendFollowup(id) {
     await connectBackend();
     toast(`Follow-up sent to ${item.email}.`);
   } catch (error) { toast(error.message); }
+}
+
+async function cancelFollowup(id) {
+  try { await api(`/outreach/${encodeURIComponent(id)}/cancel`, { method: "POST" }); await connectBackend(); toast("Follow-up cancelled."); }
+  catch (error) { toast(error.message, { title: "Could not cancel", tone: "error" }); }
 }
 
 async function exportData() {
@@ -839,6 +1069,7 @@ document.addEventListener("click", event => {
 document.querySelector("#demo-action").addEventListener("click", async () => {
   if (state.activeView === "today") return runScan();
   if (state.activeView === "internships") return runScan();
+  if (state.activeView === "health") return handleAction({ currentTarget: { dataset: { action: "run-evaluation" } } });
   if (state.activeView === "settings") {
     state.settings.role = document.querySelector("#role").value.trim() || seedState.settings.role;
     state.settings.alternateTitles = document.querySelector("#alternate-titles").value.trim();
@@ -886,10 +1117,12 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
 });
 
 document.querySelector("#notifications-button").addEventListener("click", () => {
-  const pending = state.jobs.filter(job => job.status === "new").length;
-  const alerts = state.leads.length;
-  const replies = state.outreach.filter(item => item.status === "sent").length;
-  toast(pending || replies || alerts ? `${pending} scored jobs are in your queues. ${alerts} portal alerts are unscored links, not job matches. ${replies} recruiter threads are active.` : "No new notifications.", { title: "Search status", duration: 4400 });
+  const notifications = state.notifications || [];
+  dialog.className = "notification-dialog";
+  dialog.innerHTML = `<div class="dialog-content"><div class="dialog-header"><div><span class="badge new">ACTIVITY</span><h2>Notifications</h2></div><button class="dialog-close" aria-label="Close">x</button></div><div class="notification-list">${notifications.length ? notifications.map(item => `<article class="${item.read_at ? "read" : ""}"><span class="toast-indicator"></span><div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.message)}</p><small>${escapeHtml(item.created_at)}</small></div></article>`).join("") : `<div class="empty-state"><h2>All caught up</h2><p>Source failures, new matches, and workflow events will stay here until read.</p></div>`}</div>${notifications.some(item => !item.read_at) ? `<div class="dialog-actions"><button class="primary-button" id="read-all-notifications">Mark all read</button></div>` : ""}</div>`;
+  dialog.querySelector(".dialog-close").addEventListener("click", () => dialog.close());
+  dialog.querySelector("#read-all-notifications")?.addEventListener("click", async () => { await api("/notifications/read-all", { method: "PUT" }); await connectBackend(); dialog.close(); });
+  dialog.showModal();
 });
 document.querySelector("#scan-toggle").addEventListener("click", async () => {
   state.settings.searchPaused = !state.settings.searchPaused;
@@ -911,5 +1144,9 @@ document.querySelector("#scan-toggle").addEventListener("click", async () => {
 document.querySelector("#date-label").textContent = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "short", day: "numeric" }).format(new Date());
 
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js"));
+const updateOnlineState = () => { document.querySelector("#offline-banner").hidden = navigator.onLine; };
+window.addEventListener("online", () => { updateOnlineState(); connectBackend(); });
+window.addEventListener("offline", updateOnlineState);
+updateOnlineState();
 render();
 connectBackend();

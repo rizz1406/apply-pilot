@@ -109,6 +109,7 @@ export async function syncApplicationConfirmations(env) {
     if (!(result.meta.changes || 0)) continue;
     await env.DB.prepare("INSERT INTO activity_log (event_type, entity_type, entity_id, message) VALUES ('application_confirmed', 'application', ?, ?)")
       .bind(application.id, `Application confirmation detected for ${application.title} at ${application.company}`).run();
+    await env.DB.prepare("UPDATE application_checklist SET completed = 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE application_id = ? AND item_key = 'confirmation'").bind(application.id).run();
     confirmed += 1;
   }
   return { checked: (listing.messages || []).length, confirmed };

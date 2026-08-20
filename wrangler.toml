@@ -3,6 +3,10 @@ main = "worker/index.js"
 compatibility_date = "2026-08-01"
 preview_urls = false
 
+[ai]
+binding = "AI"
+remote = true
+
 [vars]
 APP_ORIGIN = "https://applypilot.pages.dev"
 GEMINI_MODEL = "gemini-3.5-flash"

@@ -16,6 +16,10 @@ npx.cmd wrangler secret put GMAIL_REFRESH_TOKEN
 
 Telegram credentials are optional and should be stored as Worker secrets as well.
 
+Cloudflare Access can replace browser-held API tokens. Set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` only after the Access application is active; otherwise the API deliberately continues using `ADMIN_TOKEN`.
+
+Backups are encrypted before GitHub receives the artifact. Never commit the encryption password, API token, decrypted export, or generated backup file.
+
 ## Personal data
 
 - Candidate, application, and outreach records are stored in the configured Cloudflare D1 database.

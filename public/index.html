@@ -6,10 +6,11 @@
   <meta name="theme-color" content="#f7f8f5">
   <meta name="description" content="A mobile-first job search command center.">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=30">
+  <link rel="stylesheet" href="styles.css?v=49">
   <title>ApplyPilot</title>
 </head>
 <body>
+  <div class="offline-banner" id="offline-banner" hidden>Offline mode: showing your last synced data.</div>
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="#" aria-label="ApplyPilot home">
@@ -53,6 +54,7 @@
     </div>
   </div>
   <dialog id="detail-dialog"></dialog>
-  <script src="app.js?v=41"></script>
+  <script src="vendor/jspdf.umd.min.js?v=1"></script>
+  <script src="app.js?v=49"></script>
 </body>
 </html>

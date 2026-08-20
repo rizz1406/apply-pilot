@@ -1,0 +1,30 @@
+name: Encrypted ApplyPilot backup
+
+on:
+  schedule:
+    - cron: "20 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Export private data
+        env:
+          APPLYPILOT_API_TOKEN: ${{ secrets.APPLYPILOT_API_TOKEN }}
+        run: curl --fail --silent --show-error -H "Authorization: Bearer ${APPLYPILOT_API_TOKEN}" https://applypilot-api.rizwanmirza95551.workers.dev/api/data/export -o applypilot-backup.json
+      - name: Encrypt export
+        env:
+          BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
+        run: openssl enc -aes-256-cbc -pbkdf2 -salt -in applypilot-backup.json -out applypilot-backup.json.enc -pass env:BACKUP_ENCRYPTION_PASSWORD && rm applypilot-backup.json
+      - name: Store encrypted backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: applypilot-backup-${{ github.run_id }}
+          path: applypilot-backup.json.enc
+          retention-days: 14
+          if-no-files-found: error

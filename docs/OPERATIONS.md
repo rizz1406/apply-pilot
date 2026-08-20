@@ -1,5 +1,21 @@
 # ApplyPilot Operations Guide
 
+## Private access
+
+The API accepts the existing `ADMIN_TOKEN` by default. For browser login without storing that token, create a Cloudflare Zero Trust Access application for both `applypilot.pages.dev` and the Worker URL, then set Worker variables `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`. Keep `ALLOW_ADMIN_TOKEN=true` so the encrypted backup workflow can authenticate. Access is optional and the deployment remains usable before it is configured.
+
+## Encrypted backups
+
+The root workflow `.github/workflows/backup.yml` exports the database once per day, encrypts it, and retains the encrypted artifact for 14 days. In a private GitHub repository add Actions secrets `APPLYPILOT_API_TOKEN` and `BACKUP_ENCRYPTION_PASSWORD`. The workflow does not run until the repository is pushed and those secrets exist.
+
+```powershell
+openssl enc -d -aes-256-cbc -pbkdf2 -in applypilot-backup.json.enc -out applypilot-backup.json
+```
+
+## Health checks
+
+The Health page records every source response, retry count, duration, job count, matching evaluation, and document snapshot. A failed board is retried three times. Source failures remain visible in the notification center and do not stop other sources.
+
 ## Daily use
 
 1. Open `https://applypilot.pages.dev` on desktop or mobile.

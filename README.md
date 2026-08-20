@@ -6,7 +6,7 @@
 
 [![Web app](https://img.shields.io/badge/Live%20app-applypilot.pages.dev-087443?style=for-the-badge)](https://applypilot.pages.dev)
 [![Cloudflare Pages](https://img.shields.io/badge/Cloudflare-Pages%20%2B%20Workers-f38020?style=for-the-badge)](https://www.cloudflare.com/)
-[![Tests](https://img.shields.io/badge/Tests-21%20passing-0f766e?style=for-the-badge)](#testing)
+[![Tests](https://img.shields.io/badge/Tests-automated-0f766e?style=for-the-badge)](#testing)
 [![Repository](https://img.shields.io/badge/Repository-Private-1f2937?style=for-the-badge)](https://github.com/rizz1406/apply-pilot)
 
 Find high-fit roles, build grounded ATS resume packs, track every application, and send recruiter follow-ups only after approval. Works on desktop and mobile with no laptop left running.
@@ -70,7 +70,8 @@ flowchart TB
     API --> DB[(Cloudflare D1<br/>applications and history)]
     API --> ATS[Greenhouse / Lever<br/>Ashby / SmartRecruiters]
     API --> GMAIL[Gmail API<br/>alerts, send, replies]
-    API -. optional .-> AI[Gemini<br/>grounded resume wording]
+    API --> AI[Workers AI<br/>grounded resume wording]
+    API -. fallback .-> GEMINI[Gemini<br/>optional fallback]
     CRON[Cloudflare Cron<br/>every 10 minutes] --> API
 ```
 
@@ -80,7 +81,8 @@ flowchart TB
 | Cloudflare Worker | API, matching, scheduled scans, Gmail actions | Free tier limits |
 | Cloudflare D1 | Search profile, jobs, applications, outreach, activity | Free tier limits |
 | Gmail API | Alert import, approved sends, reply tracking | Google quota limits |
-| Gemini | Optional resume wording and audit workflow | Optional provider quota/limits |
+| Workers AI | Primary grounded resume wording and audit workflow | Cloudflare free allocation limits |
+| Gemini | Optional fallback when configured | Optional provider quota/limits |
 
 The cloud scan runs every **10 minutes**, even when your laptop is off. It checks configured public ATS boards, imports supported job-alert emails, deduplicates jobs, applies your rules, and records high-fit roles for review. It cannot promise instant discovery of every job on the internet; speed depends on the monitored sources and alert delivery.
 

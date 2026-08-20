@@ -6,6 +6,9 @@ import { notify } from "./notifications.js";
 import { contentHash, createTailoredPack } from "./resume-tailor.js";
 import { evaluateApplicationGate } from "./quality-gate.js";
 import { createInterviewPrep } from "./application-tools.js";
+import { atsReadiness, checklistDefaults, mergeVerifiedEvidence, resumeDiff, validateRevisionInstruction } from "./resume-workflow.js";
+import { authorizeRequest } from "./access-auth.js";
+import { runMatchingEvaluation } from "./evaluation.js";
 
 const json = (data, status = 200, extra = {}) => new Response(JSON.stringify(data), {
   status,
@@ -22,11 +25,6 @@ const cors = (env, request) => {
   "Vary": "Origin"
   };
 };
-
-function authorized(request, env) {
-  if (env.DEMO_MODE === "true" && !env.ADMIN_TOKEN) return true;
-  return Boolean(env.ADMIN_TOKEN) && request.headers.get("Authorization") === `Bearer ${env.ADMIN_TOKEN}`;
-}
 
 function pathMatch(pathname, pattern) {
   const names = [];
@@ -46,13 +44,39 @@ async function activity(env, type, message, entityType = null, entityId = null, 
     .bind(type, entityType, entityId, message, JSON.stringify(metadata)).run();
 }
 
+async function ensureChecklist(env, applicationId, provider = "Portal") {
+  await env.DB.batch(checklistDefaults(provider).map(item => env.DB.prepare(`INSERT OR IGNORE INTO application_checklist (application_id, item_key, label, required, completed)
+    VALUES (?, ?, ?, ?, ?)`)
+    .bind(applicationId, item.item_key, item.label, item.required, ["jd_reviewed", "resume_tailored"].includes(item.item_key) ? 1 : 0)));
+}
+
+async function saveResumeVersion(env, applicationId, tailoredId, pack, instruction = "", before = {}) {
+  const latest = await env.DB.prepare("SELECT MAX(version_number) AS number FROM resume_versions WHERE application_id = ?").bind(applicationId).first();
+  const version = Number(latest?.number || 0) + 1;
+  const diff = resumeDiff(before, pack.resume);
+  const readiness = atsReadiness(pack.resume, pack.coverage, pack.audit);
+  await env.DB.prepare(`INSERT INTO resume_versions (id, application_id, tailored_resume_id, version_number, instruction, resume_json, audit_json, keyword_coverage, latex_content, model, change_summary)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), applicationId, tailoredId, version, instruction, JSON.stringify(pack.resume), JSON.stringify(pack.audit), JSON.stringify(pack.coverage), pack.latex, pack.model, JSON.stringify({ ...diff, atsReadiness: readiness })).run();
+  return { version, diff, readiness };
+}
+
+async function saveDocumentVersion(env, applicationId, tailoredId, kind, content, mimeType) {
+  const latest = await env.DB.prepare("SELECT MAX(version_number) AS number FROM document_versions WHERE application_id=? AND kind=?").bind(applicationId, kind).first();
+  const version = Number(latest?.number || 0) + 1;
+  await env.DB.prepare(`INSERT INTO document_versions (id, application_id, tailored_resume_id, kind, version_number, content, mime_type, checksum)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), applicationId, tailoredId, kind, version, content || "", mimeType, await contentHash(content || "")).run();
+  return version;
+}
+
 async function bootstrap(env) {
   const [settings, profile, jobs, applications, outreach, activities, standardSources, externalSources, leads, resumeVariants, analytics, contacts, roleAnalytics, sourceAnalytics, answers, interviews] = await Promise.all([
     env.DB.prepare("SELECT * FROM settings WHERE id = 1").first(),
     env.DB.prepare("SELECT * FROM candidate_profile WHERE id = 1").first(),
     env.DB.prepare("SELECT * FROM jobs WHERE status IN ('new','shortlisted') ORDER BY score DESC, discovered_at DESC LIMIT 100").all(),
     env.DB.prepare(`SELECT a.*, j.title, j.company, j.score, j.apply_url, j.description, j.opportunity_type,
-      t.resume_json AS tailored_resume_json, t.audit_json AS resume_audit_json, t.keyword_coverage, t.match_score AS tailored_match_score, t.latex_content, t.status AS tailored_status
+      t.resume_json AS tailored_resume_json, t.audit_json AS resume_audit_json, t.keyword_coverage, t.match_score AS tailored_match_score, t.latex_content, t.status AS tailored_status, t.model AS tailored_model
       FROM applications a JOIN jobs j ON j.id = a.job_id LEFT JOIN tailored_resumes t ON t.id = a.tailored_resume_id
       ORDER BY a.updated_at DESC LIMIT 100`).all(),
     env.DB.prepare(`SELECT o.*, j.title AS role, j.company FROM outreach o JOIN applications a ON a.id = o.application_id JOIN jobs j ON j.id = a.job_id ORDER BY o.updated_at DESC LIMIT 100`).all(),
@@ -79,11 +103,21 @@ async function bootstrap(env) {
     env.DB.prepare("SELECT key, label, value, verified FROM application_answers ORDER BY label").all(),
     env.DB.prepare("SELECT application_id, scheduled_at, notes, prep_json, updated_at FROM interview_workspaces").all()
   ]);
+  const [evidence, versions, checklist, sourceHealth, taskRuns, notifications, evaluation, documentVersions] = await Promise.all([
+    env.DB.prepare("SELECT * FROM verified_evidence ORDER BY verified DESC, active DESC, updated_at DESC").all(),
+    env.DB.prepare("SELECT id, application_id, tailored_resume_id, version_number, instruction, model, change_summary, created_at FROM resume_versions ORDER BY application_id, version_number DESC LIMIT 200").all(),
+    env.DB.prepare("SELECT * FROM application_checklist ORDER BY application_id, rowid").all(),
+    env.DB.prepare("SELECT * FROM source_scan_runs ORDER BY created_at DESC LIMIT 100").all(),
+    env.DB.prepare("SELECT * FROM task_runs ORDER BY started_at DESC LIMIT 30").all(),
+    env.DB.prepare("SELECT * FROM app_notifications ORDER BY created_at DESC LIMIT 50").all(),
+    env.DB.prepare("SELECT * FROM accuracy_evaluations ORDER BY created_at DESC LIMIT 1").first(),
+    env.DB.prepare("SELECT id, application_id, tailored_resume_id, kind, version_number, mime_type, checksum, created_at FROM document_versions ORDER BY created_at DESC LIMIT 300").all()
+  ]);
   const sources = [
     ...standardSources.results.map(source => ({ ...source, id: `core:${source.id}` })),
     ...externalSources.results.map(source => ({ ...source, id: `external:${source.id}` }))
   ].sort((a, b) => a.label.localeCompare(b.label));
-  return { settings, profile, jobs: jobs.results, applications: applications.results, outreach: outreach.results, activity: activities.results, sources, leads: leads.results, resumeVariants: resumeVariants.results, analytics: { ...analytics, byRole: roleAnalytics.results, bySource: sourceAnalytics.results }, contacts: contacts.results, answers: answers.results, interviews: interviews.results, demoMode: env.DEMO_MODE === "true" };
+  return { settings, profile, jobs: jobs.results, applications: applications.results, outreach: outreach.results, activity: activities.results, sources, leads: leads.results, resumeVariants: resumeVariants.results, analytics: { ...analytics, byRole: roleAnalytics.results, bySource: sourceAnalytics.results }, contacts: contacts.results, answers: answers.results, interviews: interviews.results, evidence: evidence.results, resumeVersions: versions.results, checklist: checklist.results, sourceHealth: sourceHealth.results, taskRuns: taskRuns.results, notifications: notifications.results, evaluation, documentVersions: documentVersions.results, demoMode: env.DEMO_MODE === "true", authMode: env.ACCESS_AUD && env.ACCESS_TEAM_DOMAIN ? "access" : "token" };
 }
 
 async function route(request, env) {
@@ -92,8 +126,52 @@ async function route(request, env) {
   const method = request.method;
 
   if (method === "GET" && path === "/api/health") return json({ ok: true, service: "applypilot", time: new Date().toISOString() });
-  if (!authorized(request, env)) return json({ error: "Unauthorized" }, 401);
+  const auth = await authorizeRequest(request, env);
+  if (!auth.authorized) return json({ error: "Unauthorized", authMode: auth.mode }, 401);
+  if (method === "GET" && path === "/api/auth/status") return json({ ok: true, mode: auth.mode, identity: auth.identity });
+  if (method === "POST" && path === "/api/ai/provider-test") {
+    const pack = await createTailoredPack(env, {
+      name: "Test Candidate", title: "Data Analyst", email: "test@example.com", phone: "000", location: "India",
+      summary: "Data analyst building verified SQL reporting workflows.", skills: "SQL, BigQuery, Power BI",
+      experience: [{ role: "Data Analyst", company: "Example", location: "India", dates: "2025 - Present", bullets: ["Built verified SQL reporting workflows."] }],
+      projects: [], education: [], certifications: []
+    }, { title: "Revenue Data Analyst", company: "Example", description: "Requires SQL, BigQuery and revenue reporting experience.", score: 80 });
+    return json({ ok: true, model: pack.model, summary: pack.resume.summary, coverage: pack.coverage, latexTemplate: pack.latex.startsWith("\\documentclass{resume}") });
+  }
   if (method === "GET" && path === "/api/bootstrap") return json(await bootstrap(env));
+
+  if (method === "POST" && path === "/api/evaluations/run") {
+    const settings = await env.DB.prepare("SELECT * FROM settings WHERE id=1").first();
+    const result = runMatchingEvaluation({
+      ...settings,
+      target_role: "Data Analyst",
+      alternate_titles: "BI Analyst,Junior Data Engineer",
+      preferred_locations: "Hyderabad,Remote India",
+      required_skills: "SQL,BigQuery,Power BI,Python,ETL,GCP",
+      excluded_keywords: "commission",
+      minimum_match_score: 50,
+      candidate_years: 2,
+      experience_tolerance_years: 1
+    });
+    await env.DB.prepare(`INSERT INTO accuracy_evaluations (id, suite_name, total, passed, accuracy, precision_score, recall_score, false_positives, false_negatives, details_json)
+      VALUES (?, 'matching-baseline', ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(crypto.randomUUID(), result.total, result.passed, result.accuracy, result.precision, result.recall, result.falsePositives, result.falseNegatives, JSON.stringify(result.details)).run();
+    return json({ ok: true, ...result });
+  }
+  if (method === "PUT" && path === "/api/notifications/read-all") {
+    await env.DB.prepare("UPDATE app_notifications SET read_at=CURRENT_TIMESTAMP WHERE read_at IS NULL").run();
+    return json({ ok: true });
+  }
+  const notification = pathMatch(path, "/api/notifications/:id/read");
+  if (method === "PUT" && notification) {
+    await env.DB.prepare("UPDATE app_notifications SET read_at=CURRENT_TIMESTAMP WHERE id=?").bind(notification.id).run();
+    return json({ ok: true });
+  }
+  const documentHistory = pathMatch(path, "/api/applications/:id/documents");
+  if (method === "GET" && documentHistory) {
+    const { results } = await env.DB.prepare("SELECT * FROM document_versions WHERE application_id=? ORDER BY created_at DESC, kind, version_number DESC").bind(documentHistory.id).all();
+    return json({ documents: results });
+  }
 
   if (method === "POST" && path === "/api/scan") return json(await scanSources(env));
   if (method === "POST" && path === "/api/gmail/sync") {
@@ -211,6 +289,32 @@ async function route(request, env) {
     return json({ ok: true });
   }
 
+  if (method === "POST" && path === "/api/evidence") {
+    const body = await request.json();
+    const types = ["experience", "project", "certification", "skill", "achievement"];
+    if (!types.includes(body.evidenceType)) return json({ error: "Choose a valid evidence type" }, 400);
+    if (!String(body.title || "").trim()) return json({ error: "Evidence title is required" }, 400);
+    if (!body.confirmed) return json({ error: "Confirm that this evidence is accurate before saving" }, 400);
+    const details = body.details && typeof body.details === "object" ? body.details : {};
+    const id = crypto.randomUUID();
+    await env.DB.prepare(`INSERT INTO verified_evidence (id, evidence_type, title, details_json, source_url, verified, active)
+      VALUES (?, ?, ?, ?, ?, 1, 1)`).bind(id, body.evidenceType, body.title.trim(), JSON.stringify(details), String(body.sourceUrl || "user-confirmed").trim()).run();
+    await activity(env, "evidence_verified", `Verified ${body.evidenceType} evidence added: ${body.title.trim()}`, "evidence", id);
+    return json({ ok: true, id }, 201);
+  }
+  const evidenceItem = pathMatch(path, "/api/evidence/:id");
+  if (method === "PUT" && evidenceItem) {
+    const body = await request.json();
+    const result = await env.DB.prepare("UPDATE verified_evidence SET active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(body.active ? 1 : 0, evidenceItem.id).run();
+    if (!(result.meta.changes || 0)) return json({ error: "Evidence item not found" }, 404);
+    return json({ ok: true });
+  }
+  if (method === "DELETE" && evidenceItem) {
+    const result = await env.DB.prepare("DELETE FROM verified_evidence WHERE id = ?").bind(evidenceItem.id).run();
+    if (!(result.meta.changes || 0)) return json({ error: "Evidence item not found" }, 404);
+    return json({ ok: true });
+  }
+
   const decision = pathMatch(path, "/api/jobs/:id/decision");
   if (method === "POST" && decision) {
     const body = await request.json();
@@ -225,7 +329,8 @@ async function route(request, env) {
       if (!gate.allowed) return json({ error: gate.error }, 409);
       const master = await env.DB.prepare("SELECT * FROM master_resume_profiles WHERE id = 1").first();
       if (!master) return json({ error: "Verified master resume profile is missing" }, 409);
-      const profile = JSON.parse(master.profile_json);
+      const { results: evidence } = await env.DB.prepare("SELECT * FROM verified_evidence WHERE verified = 1 AND active = 1 ORDER BY created_at").all();
+      const profile = mergeVerifiedEvidence(JSON.parse(master.profile_json), evidence);
       const jdHash = await contentHash(job.description || "");
       let tailored = await env.DB.prepare("SELECT * FROM tailored_resumes WHERE job_id = ? AND jd_hash = ?").bind(job.id, jdHash).first();
       if (!tailored) {
@@ -250,6 +355,16 @@ async function route(request, env) {
         env.DB.prepare(`INSERT INTO application_documents (id, application_id, tailored_resume_id, kind, content, mime_type) VALUES (?, ?, ?, 'json', ?, 'application/json') ON CONFLICT(application_id, kind) DO UPDATE SET tailored_resume_id=excluded.tailored_resume_id, content=excluded.content, created_at=CURRENT_TIMESTAMP`).bind(crypto.randomUUID(), application.id, tailored.id, tailored.resume_json),
         env.DB.prepare(`INSERT INTO application_documents (id, application_id, tailored_resume_id, kind, content, mime_type) VALUES (?, ?, ?, 'cover_letter', ?, 'text/plain') ON CONFLICT(application_id, kind) DO UPDATE SET tailored_resume_id=excluded.tailored_resume_id, content=excluded.content, created_at=CURRENT_TIMESTAMP`).bind(crypto.randomUUID(), application.id, tailored.id, draft.coverLetter || "")
       ]);
+      await Promise.all([
+        saveDocumentVersion(env, application.id, tailored.id, "latex", tailored.latex_content || "", "application/x-latex"),
+        saveDocumentVersion(env, application.id, tailored.id, "json", tailored.resume_json, "application/json"),
+        saveDocumentVersion(env, application.id, tailored.id, "cover_letter", draft.coverLetter || "", "text/plain")
+      ]);
+      await ensureChecklist(env, application.id, job.provider);
+      const existingVersion = await env.DB.prepare("SELECT id FROM resume_versions WHERE application_id = ? LIMIT 1").bind(application.id).first();
+      if (!existingVersion) await saveResumeVersion(env, application.id, tailored.id, {
+        resume: JSON.parse(tailored.resume_json), audit: JSON.parse(tailored.audit_json || "{}"), coverage: JSON.parse(tailored.keyword_coverage || "{}"), latex: tailored.latex_content || "", model: tailored.model || ""
+      }, "Initial tailored resume");
       const contactEmails = [...new Set((job.description || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [])].slice(0, 5);
       if (contactEmails.length) await env.DB.batch(contactEmails.map(email => env.DB.prepare(`INSERT INTO recruiter_contacts (job_id, email, source_url, verified)
         VALUES (?, ?, ?, 0) ON CONFLICT(job_id, email) DO NOTHING`).bind(job.id, email.toLowerCase(), job.apply_url)));
@@ -267,7 +382,84 @@ async function route(request, env) {
     await env.DB.prepare("UPDATE applications SET stage = ?, submitted_at = CASE WHEN ? = 'applied' THEN CURRENT_TIMESTAMP ELSE submitted_at END, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
       .bind(body.stage, body.stage, stage.id).run();
     await activity(env, "stage_changed", `Application moved to ${body.stage}`, "application", stage.id);
+    if (body.stage === "applied") await env.DB.prepare("UPDATE application_checklist SET completed = 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE application_id = ? AND item_key = 'submitted'").bind(stage.id).run();
     return json({ ok: true });
+  }
+
+  const checklistItem = pathMatch(path, "/api/applications/:id/checklist/:key");
+  if (method === "PUT" && checklistItem) {
+    const body = await request.json();
+    const result = await env.DB.prepare(`UPDATE application_checklist SET completed = ?, completed_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, updated_at = CURRENT_TIMESTAMP
+      WHERE application_id = ? AND item_key = ?`).bind(body.completed ? 1 : 0, body.completed ? 1 : 0, checklistItem.id, checklistItem.key).run();
+    if (!(result.meta.changes || 0)) return json({ error: "Checklist item not found" }, 404);
+    return json({ ok: true });
+  }
+
+  const restoreVersion = pathMatch(path, "/api/applications/:id/resume-versions/:version/restore");
+  if (method === "POST" && restoreVersion) {
+    const application = await env.DB.prepare("SELECT * FROM applications WHERE id = ?").bind(restoreVersion.id).first();
+    if (!application?.tailored_resume_id) return json({ error: "Application resume not found" }, 404);
+    const selected = await env.DB.prepare("SELECT * FROM resume_versions WHERE application_id = ? AND version_number = ?").bind(application.id, Number(restoreVersion.version)).first();
+    if (!selected) return json({ error: "Resume version not found" }, 404);
+    const current = await env.DB.prepare("SELECT * FROM tailored_resumes WHERE id = ?").bind(application.tailored_resume_id).first();
+    const pack = { resume: JSON.parse(selected.resume_json), audit: JSON.parse(selected.audit_json || "{}"), coverage: JSON.parse(selected.keyword_coverage || "{}"), latex: selected.latex_content || "", model: selected.model || "restored-version" };
+    await env.DB.prepare(`UPDATE tailored_resumes SET resume_json=?, audit_json=?, keyword_coverage=?, match_score=?, latex_content=?, status='review', model=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .bind(selected.resume_json, selected.audit_json, selected.keyword_coverage, pack.resume.matchScore || null, selected.latex_content || "", pack.model, current.id).run();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE applications SET stage='prepared', updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(application.id),
+      env.DB.prepare("UPDATE application_documents SET content=?, created_at=CURRENT_TIMESTAMP WHERE application_id=? AND kind='json'").bind(selected.resume_json, application.id),
+      env.DB.prepare("UPDATE application_documents SET content=?, created_at=CURRENT_TIMESTAMP WHERE application_id=? AND kind='latex'").bind(selected.latex_content || "", application.id)
+    ]);
+    await Promise.all([
+      saveDocumentVersion(env, application.id, current.id, "json", selected.resume_json, "application/json"),
+      saveDocumentVersion(env, application.id, current.id, "latex", selected.latex_content || "", "application/x-latex")
+    ]);
+    const saved = await saveResumeVersion(env, application.id, current.id, pack, `Restored version ${selected.version_number}`, current ? JSON.parse(current.resume_json) : {});
+    await activity(env, "resume_version_restored", `Resume version ${selected.version_number} restored as v${saved.version}`, "application", application.id);
+    return json({ ok: true, ...saved });
+  }
+
+  const regenerate = pathMatch(path, "/api/applications/:id/regenerate-resume");
+  if (method === "POST" && regenerate) {
+    const body = await request.json().catch(() => ({}));
+    const instruction = validateRevisionInstruction(body.instruction);
+    const application = await env.DB.prepare(`SELECT a.*, j.title, j.company, j.description, j.score
+      FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.id = ?`).bind(regenerate.id).first();
+    if (!application) return json({ error: "Application not found" }, 404);
+    const master = await env.DB.prepare("SELECT * FROM master_resume_profiles WHERE id = 1").first();
+    if (!master) return json({ error: "Verified master resume profile is missing" }, 409);
+    const { results: evidence } = await env.DB.prepare("SELECT * FROM verified_evidence WHERE verified = 1 AND active = 1 ORDER BY created_at").all();
+    const profile = mergeVerifiedEvidence(JSON.parse(master.profile_json), evidence);
+    const job = { title: application.title, company: application.company, description: application.description || "", score: application.score };
+    const current = application.tailored_resume_id ? await env.DB.prepare("SELECT * FROM tailored_resumes WHERE id = ?").bind(application.tailored_resume_id).first() : null;
+    const before = current ? JSON.parse(current.resume_json) : {};
+    const existingVersion = await env.DB.prepare("SELECT id FROM resume_versions WHERE application_id = ? LIMIT 1").bind(application.id).first();
+    if (current && !existingVersion) await saveResumeVersion(env, application.id, current.id, {
+      resume: before, audit: JSON.parse(current.audit_json || "{}"), coverage: JSON.parse(current.keyword_coverage || "{}"), latex: current.latex_content || "", model: current.model || ""
+    }, "Initial tailored resume");
+    const pack = await createTailoredPack(env, profile, job, { instruction });
+    const jdHash = await contentHash(job.description);
+    const tailoredId = current?.id || crypto.randomUUID();
+    if (current) {
+      await env.DB.prepare(`UPDATE tailored_resumes SET profile_snapshot=?, jd_hash=?, resume_json=?, audit_json=?, keyword_coverage=?, match_score=?, latex_content=?, status=?, model=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .bind(JSON.stringify(profile), jdHash, JSON.stringify(pack.resume), JSON.stringify(pack.audit), JSON.stringify(pack.coverage), pack.resume.matchScore, pack.latex, pack.status, pack.model, tailoredId).run();
+    } else {
+      await env.DB.prepare(`INSERT INTO tailored_resumes (id, job_id, profile_snapshot, jd_hash, resume_json, audit_json, keyword_coverage, match_score, latex_content, status, model)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(tailoredId, application.job_id, JSON.stringify(profile), jdHash, JSON.stringify(pack.resume), JSON.stringify(pack.audit), JSON.stringify(pack.coverage), pack.resume.matchScore, pack.latex, pack.status, pack.model).run();
+    }
+    await env.DB.prepare("UPDATE applications SET tailored_resume_id=?, stage='prepared', updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(tailoredId, application.id).run();
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO application_documents (id, application_id, tailored_resume_id, kind, content, mime_type) VALUES (?, ?, ?, 'latex', ?, 'application/x-latex') ON CONFLICT(application_id, kind) DO UPDATE SET tailored_resume_id=excluded.tailored_resume_id, content=excluded.content, created_at=CURRENT_TIMESTAMP`).bind(crypto.randomUUID(), application.id, tailoredId, pack.latex),
+      env.DB.prepare(`INSERT INTO application_documents (id, application_id, tailored_resume_id, kind, content, mime_type) VALUES (?, ?, ?, 'json', ?, 'application/json') ON CONFLICT(application_id, kind) DO UPDATE SET tailored_resume_id=excluded.tailored_resume_id, content=excluded.content, created_at=CURRENT_TIMESTAMP`).bind(crypto.randomUUID(), application.id, tailoredId, JSON.stringify(pack.resume))
+    ]);
+    await Promise.all([
+      saveDocumentVersion(env, application.id, tailoredId, "latex", pack.latex, "application/x-latex"),
+      saveDocumentVersion(env, application.id, tailoredId, "json", JSON.stringify(pack.resume), "application/json")
+    ]);
+    const version = await saveResumeVersion(env, application.id, tailoredId, pack, instruction || "Regenerate for this JD", before);
+    await activity(env, "resume_regenerated", `Resume v${version.version} regenerated with ${pack.model}: ${application.title} at ${application.company}`, "application", application.id, { model: pack.model, coverage: pack.coverage.pct, instruction, diff: version.diff });
+    return json({ ok: true, model: pack.model, matchScore: pack.resume.matchScore, coverage: pack.coverage, ...version });
   }
 
   const interviewPrep = pathMatch(path, "/api/applications/:id/interview-prep");
@@ -287,6 +479,7 @@ async function route(request, env) {
     const result = await env.DB.prepare("UPDATE tailored_resumes SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(tailoredApproval.id).run();
     if (!(result.meta.changes || 0)) return json({ error: "Tailored resume not found" }, 404);
     await env.DB.prepare("UPDATE applications SET stage = 'approved', updated_at = CURRENT_TIMESTAMP WHERE tailored_resume_id = ? AND stage = 'prepared'").bind(tailoredApproval.id).run();
+    await env.DB.prepare("UPDATE application_checklist SET completed = 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE application_id IN (SELECT id FROM applications WHERE tailored_resume_id = ?) AND item_key = 'resume_approved'").bind(tailoredApproval.id).run();
     await activity(env, "tailored_resume_approved", "Job-specific resume approved", "tailored_resume", tailoredApproval.id);
     return json({ ok: true });
   }
@@ -306,6 +499,7 @@ async function route(request, env) {
         .bind(application.job_id, body.recruiterName || null, body.recruiterEmail.trim().toLowerCase(), body.sourceUrl || "user-confirmed").run();
     }
     await activity(env, "outreach_drafted", "Recruiter outreach draft created", "outreach", id);
+    await env.DB.prepare("UPDATE application_checklist SET completed = 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE application_id = ? AND item_key = 'followup'").bind(body.applicationId).run();
     return json({ ok: true, id }, 201);
   }
   const approveSend = pathMatch(path, "/api/outreach/:id/approve-send");
@@ -332,6 +526,13 @@ async function route(request, env) {
       .bind(sent.threadId || null, item.id).run();
     await activity(env, "email_sent", `Recruiter email sent to ${item.recruiter_email}`, "outreach", item.id);
     return json({ ok: true, messageId: sent.id });
+  }
+  const cancelOutreach = pathMatch(path, "/api/outreach/:id/cancel");
+  if (method === "POST" && cancelOutreach) {
+    const result = await env.DB.prepare("UPDATE outreach SET status='cancelled', scheduled_for=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN ('draft','approved')").bind(cancelOutreach.id).run();
+    if (!(result.meta.changes || 0)) return json({ error: "Follow-up is not cancellable" }, 409);
+    await activity(env, "followup_cancelled", "Scheduled recruiter follow-up cancelled", "outreach", cancelOutreach.id);
+    return json({ ok: true });
   }
 
   if (method === "PUT" && path === "/api/settings") {

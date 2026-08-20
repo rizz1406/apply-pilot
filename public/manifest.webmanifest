@@ -1,11 +1,20 @@
 {
   "name": "ApplyPilot",
   "short_name": "ApplyPilot",
+  "id": "./",
   "description": "Mobile job search command center",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "categories": ["productivity", "business"],
   "background_color": "#f7f8f5",
   "theme_color": "#f7f8f5",
+  "shortcuts": [
+    { "name": "Review jobs", "short_name": "Review", "url": "./?view=today", "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }] },
+    { "name": "Pipeline", "short_name": "Pipeline", "url": "./?view=pipeline", "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
+  ],
   "icons": [
     {
       "src": "icon.svg",

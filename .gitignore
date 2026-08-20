@@ -5,3 +5,8 @@ node_modules/
 dist/
 *.log
 data/private/
+/tmp/
+/output/
+/LaunchDarkly-Data_Analyst_-_Revenue_Metrics.pdf
+applypilot-backup.json
+applypilot-backup.json.enc
