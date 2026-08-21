@@ -9,6 +9,10 @@ import { createInterviewPrep } from "./application-tools.js";
 import { atsReadiness, checklistDefaults, mergeVerifiedEvidence, resumeDiff, validateRevisionInstruction } from "./resume-workflow.js";
 import { authorizeRequest } from "./access-auth.js";
 import { runMatchingEvaluation } from "./evaluation.js";
+import { rebuildPreferenceWeights } from "./preference-learning.js";
+import { selectProjects } from "./project-selector.js";
+import { aiBudgetStatus, recordAiUsage } from "./ai-budget.js";
+import { enqueueTask, runQueuedTask } from "./task-queue.js";
 
 const json = (data, status = 200, extra = {}) => new Response(JSON.stringify(data), {
   status,
@@ -70,6 +74,33 @@ async function saveDocumentVersion(env, applicationId, tailoredId, kind, content
   return version;
 }
 
+async function createBudgetedPack(env, profile, job, options = {}) {
+  const budget = await aiBudgetStatus(env);
+  const aiEnv = budget.remaining > 0 ? env : { ...env, AI: null, GEMINI_API_KEY: "" };
+  try {
+    const pack = await createTailoredPack(aiEnv, profile, job, options);
+    if (pack.model !== "deterministic-fallback") await recordAiUsage(env, pack.model, "resume_pack");
+    return { ...pack, budgetFallback: budget.remaining <= 0 };
+  } catch (error) {
+    await recordAiUsage(env, "provider", "resume_pack", true);
+    throw error;
+  }
+}
+
+async function saveProjectSelections(env, job, evidence) {
+  const normalized = evidence.map(item => {
+    let details = {};
+    try { details = JSON.parse(item.details_json || "{}"); } catch {}
+    return { ...item, ...details };
+  });
+  const selected = selectProjects(job, normalized);
+  await env.DB.prepare("DELETE FROM job_project_selections WHERE job_id=?").bind(job.id).run();
+  if (selected.length) await env.DB.batch(selected.map(item => env.DB.prepare(`INSERT INTO job_project_selections
+    (job_id, evidence_id, relevance_score, reason) VALUES (?, ?, ?, ?)`)
+    .bind(job.id, item.id, item.relevanceScore, item.reason)));
+  return selected;
+}
+
 async function bootstrap(env) {
   const [settings, profile, jobs, applications, outreach, activities, standardSources, externalSources, leads, resumeVariants, analytics, contacts, roleAnalytics, sourceAnalytics, answers, interviews] = await Promise.all([
     env.DB.prepare("SELECT * FROM settings WHERE id = 1").first(),
@@ -103,7 +134,7 @@ async function bootstrap(env) {
     env.DB.prepare("SELECT key, label, value, verified FROM application_answers ORDER BY label").all(),
     env.DB.prepare("SELECT application_id, scheduled_at, notes, prep_json, updated_at FROM interview_workspaces").all()
   ]);
-  const [evidence, versions, checklist, sourceHealth, taskRuns, notifications, evaluation, documentVersions] = await Promise.all([
+  const [evidence, versions, checklist, sourceHealth, taskRuns, notifications, evaluation, documentVersions, atsSources, feedback, appEvents, queuedTasks, aiUsage, projectSelections] = await Promise.all([
     env.DB.prepare("SELECT * FROM verified_evidence ORDER BY verified DESC, active DESC, updated_at DESC").all(),
     env.DB.prepare("SELECT id, application_id, tailored_resume_id, version_number, instruction, model, change_summary, created_at FROM resume_versions ORDER BY application_id, version_number DESC LIMIT 200").all(),
     env.DB.prepare("SELECT * FROM application_checklist ORDER BY application_id, rowid").all(),
@@ -111,13 +142,20 @@ async function bootstrap(env) {
     env.DB.prepare("SELECT * FROM task_runs ORDER BY started_at DESC LIMIT 30").all(),
     env.DB.prepare("SELECT * FROM app_notifications ORDER BY created_at DESC LIMIT 50").all(),
     env.DB.prepare("SELECT * FROM accuracy_evaluations ORDER BY created_at DESC LIMIT 1").first(),
-    env.DB.prepare("SELECT id, application_id, tailored_resume_id, kind, version_number, mime_type, checksum, created_at FROM document_versions ORDER BY created_at DESC LIMIT 300").all()
+    env.DB.prepare("SELECT id, application_id, tailored_resume_id, kind, version_number, mime_type, checksum, created_at FROM document_versions ORDER BY created_at DESC LIMIT 300").all(),
+    env.DB.prepare("SELECT * FROM ats_sources ORDER BY label").all(),
+    env.DB.prepare("SELECT * FROM job_feedback").all(),
+    env.DB.prepare("SELECT * FROM application_events ORDER BY created_at DESC LIMIT 300").all(),
+    env.DB.prepare("SELECT * FROM task_queue ORDER BY created_at DESC LIMIT 50").all(),
+    env.DB.prepare("SELECT provider, operation, requests, failures FROM ai_usage WHERE usage_date=date('now')").all(),
+    env.DB.prepare(`SELECT s.*, e.title FROM job_project_selections s JOIN verified_evidence e ON e.id=s.evidence_id ORDER BY s.relevance_score DESC`).all()
   ]);
   const sources = [
     ...standardSources.results.map(source => ({ ...source, id: `core:${source.id}` })),
-    ...externalSources.results.map(source => ({ ...source, id: `external:${source.id}` }))
+    ...externalSources.results.map(source => ({ ...source, id: `external:${source.id}` })),
+    ...atsSources.results.map(source => ({ ...source, id: `ats:${source.id}` }))
   ].sort((a, b) => a.label.localeCompare(b.label));
-  return { settings, profile, jobs: jobs.results, applications: applications.results, outreach: outreach.results, activity: activities.results, sources, leads: leads.results, resumeVariants: resumeVariants.results, analytics: { ...analytics, byRole: roleAnalytics.results, bySource: sourceAnalytics.results }, contacts: contacts.results, answers: answers.results, interviews: interviews.results, evidence: evidence.results, resumeVersions: versions.results, checklist: checklist.results, sourceHealth: sourceHealth.results, taskRuns: taskRuns.results, notifications: notifications.results, evaluation, documentVersions: documentVersions.results, demoMode: env.DEMO_MODE === "true", authMode: env.ACCESS_AUD && env.ACCESS_TEAM_DOMAIN ? "access" : "token" };
+  return { settings, profile, jobs: jobs.results, applications: applications.results, outreach: outreach.results, activity: activities.results, sources, leads: leads.results, resumeVariants: resumeVariants.results, analytics: { ...analytics, byRole: roleAnalytics.results, bySource: sourceAnalytics.results }, contacts: contacts.results, answers: answers.results, interviews: interviews.results, evidence: evidence.results, resumeVersions: versions.results, checklist: checklist.results, sourceHealth: sourceHealth.results, taskRuns: taskRuns.results, notifications: notifications.results, evaluation, documentVersions: documentVersions.results, feedback: feedback.results, applicationEvents: appEvents.results, queuedTasks: queuedTasks.results, aiUsage: aiUsage.results, projectSelections: projectSelections.results, demoMode: env.DEMO_MODE === "true", authMode: env.ACCESS_AUD && env.ACCESS_TEAM_DOMAIN ? "access" : "token" };
 }
 
 async function route(request, env) {
@@ -130,7 +168,7 @@ async function route(request, env) {
   if (!auth.authorized) return json({ error: "Unauthorized", authMode: auth.mode }, 401);
   if (method === "GET" && path === "/api/auth/status") return json({ ok: true, mode: auth.mode, identity: auth.identity });
   if (method === "POST" && path === "/api/ai/provider-test") {
-    const pack = await createTailoredPack(env, {
+    const pack = await createBudgetedPack(env, {
       name: "Test Candidate", title: "Data Analyst", email: "test@example.com", phone: "000", location: "India",
       summary: "Data analyst building verified SQL reporting workflows.", skills: "SQL, BigQuery, Power BI",
       experience: [{ role: "Data Analyst", company: "Example", location: "India", dates: "2025 - Present", bullets: ["Built verified SQL reporting workflows."] }],
@@ -174,6 +212,10 @@ async function route(request, env) {
   }
 
   if (method === "POST" && path === "/api/scan") return json(await scanSources(env));
+  if (method === "POST" && path === "/api/scan/queue") {
+    const bucket = Math.floor(Date.now() / 300000);
+    return json(await enqueueTask(env, "job_scan", {}, `job_scan:${bucket}`), 202);
+  }
   if (method === "POST" && path === "/api/gmail/sync") {
     const result = await syncRecruiterReplies(env);
     const confirmations = await syncApplicationConfirmations(env);
@@ -245,8 +287,11 @@ async function route(request, env) {
   }
   if (method === "POST" && path === "/api/sources") {
     const body = await request.json();
-    if (!['greenhouse', 'lever', 'ashby', 'smartrecruiters'].includes(body.provider) || !body.organization || !body.label) return json({ error: "provider, organization and label are required" }, 400);
-    const table = ['ashby', 'smartrecruiters'].includes(body.provider) ? "external_sources" : "sources";
+    if (!['greenhouse', 'lever', 'ashby', 'smartrecruiters', 'workable', 'recruitee', 'careerpage'].includes(body.provider) || !body.organization || !body.label) return json({ error: "provider, organization and label are required" }, 400);
+    if (body.provider === "careerpage") {
+      try { const parsed = new URL(body.organization); if (parsed.protocol !== "https:") throw new Error(); } catch { return json({ error: "Career page must be a valid HTTPS URL" }, 400); }
+    }
+    const table = ['workable', 'recruitee', 'careerpage'].includes(body.provider) ? "ats_sources" : ['ashby', 'smartrecruiters'].includes(body.provider) ? "external_sources" : "sources";
     await env.DB.prepare(`INSERT INTO ${table} (provider, organization, label) VALUES (?, ?, ?) ON CONFLICT(provider, organization) DO UPDATE SET label = excluded.label, enabled = 1`)
       .bind(body.provider, body.organization.trim(), body.label.trim()).run();
     await activity(env, "source_added", `Added ${body.label} job source`, "source", body.organization);
@@ -255,7 +300,7 @@ async function route(request, env) {
   const sourceParams = pathMatch(path, "/api/sources/:id");
   if (method === "DELETE" && sourceParams) {
     const [kind, rawId] = sourceParams.id.split(":");
-    const table = kind === "external" ? "external_sources" : "sources";
+    const table = kind === "ats" ? "ats_sources" : kind === "external" ? "external_sources" : "sources";
     await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(Number(rawId || sourceParams.id)).run();
     return json({ ok: true });
   }
@@ -315,6 +360,21 @@ async function route(request, env) {
     return json({ ok: true });
   }
 
+  const feedbackParams = pathMatch(path, "/api/jobs/:id/feedback");
+  if (method === "PUT" && feedbackParams) {
+    const body = await request.json();
+    const relevance = Number(body.relevance);
+    if (![-1, 1].includes(relevance)) return json({ error: "Relevance must be 1 or -1" }, 400);
+    const job = await env.DB.prepare("SELECT id FROM jobs WHERE id=?").bind(feedbackParams.id).first();
+    if (!job) return json({ error: "Job not found" }, 404);
+    await env.DB.prepare(`INSERT INTO job_feedback (id, job_id, relevance, reason) VALUES (?, ?, ?, ?)
+      ON CONFLICT(job_id) DO UPDATE SET relevance=excluded.relevance, reason=excluded.reason, updated_at=CURRENT_TIMESTAMP`)
+      .bind(crypto.randomUUID(), job.id, relevance, String(body.reason || "").slice(0, 200)).run();
+    const weights = await rebuildPreferenceWeights(env.DB);
+    await activity(env, "match_feedback", relevance > 0 ? "Job marked relevant" : "Job marked not relevant", "job", job.id);
+    return json({ ok: true, learnedFeatures: Object.keys(weights).length });
+  }
+
   const decision = pathMatch(path, "/api/jobs/:id/decision");
   if (method === "POST" && decision) {
     const body = await request.json();
@@ -330,11 +390,12 @@ async function route(request, env) {
       const master = await env.DB.prepare("SELECT * FROM master_resume_profiles WHERE id = 1").first();
       if (!master) return json({ error: "Verified master resume profile is missing" }, 409);
       const { results: evidence } = await env.DB.prepare("SELECT * FROM verified_evidence WHERE verified = 1 AND active = 1 ORDER BY created_at").all();
+      await saveProjectSelections(env, job, evidence);
       const profile = mergeVerifiedEvidence(JSON.parse(master.profile_json), evidence);
       const jdHash = await contentHash(job.description || "");
       let tailored = await env.DB.prepare("SELECT * FROM tailored_resumes WHERE job_id = ? AND jd_hash = ?").bind(job.id, jdHash).first();
       if (!tailored) {
-        const pack = await createTailoredPack(env, profile, job);
+        const pack = await createBudgetedPack(env, profile, job);
         const tailoredId = crypto.randomUUID();
         await env.DB.prepare(`INSERT OR IGNORE INTO tailored_resumes (id, job_id, profile_snapshot, jd_hash, resume_json, audit_json, keyword_coverage, match_score, latex_content, status, model)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -379,10 +440,40 @@ async function route(request, env) {
     const body = await request.json();
     const valid = ['approved','prepared','applied','outreach','interview','offer','rejected','withdrawn'];
     if (!valid.includes(body.stage)) return json({ error: "Invalid stage" }, 400);
-    await env.DB.prepare("UPDATE applications SET stage = ?, submitted_at = CASE WHEN ? = 'applied' THEN CURRENT_TIMESTAMP ELSE submitted_at END, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-      .bind(body.stage, body.stage, stage.id).run();
+    await env.DB.prepare(`UPDATE applications SET stage = ?, submitted_at = CASE WHEN ? = 'applied' THEN CURRENT_TIMESTAMP ELSE submitted_at END,
+      submission_status = CASE WHEN ? = 'applied' THEN 'submitted_unconfirmed' ELSE submission_status END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind(body.stage, body.stage, body.stage, stage.id).run();
     await activity(env, "stage_changed", `Application moved to ${body.stage}`, "application", stage.id);
-    if (body.stage === "applied") await env.DB.prepare("UPDATE application_checklist SET completed = 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE application_id = ? AND item_key = 'submitted'").bind(stage.id).run();
+    if (body.stage === "applied") {
+      await env.DB.batch([
+        env.DB.prepare("UPDATE application_checklist SET completed = 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE application_id = ? AND item_key = 'submitted'").bind(stage.id),
+        env.DB.prepare(`INSERT INTO application_events (id, application_id, event_type, source, confidence, evidence)
+          VALUES (?, ?, 'submission_reported', 'user', 0.55, 'User marked the application as submitted')`).bind(crypto.randomUUID(), stage.id)
+      ]);
+    }
+    return json({ ok: true });
+  }
+
+  const opened = pathMatch(path, "/api/applications/:id/opened");
+  if (method === "POST" && opened) {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE applications SET submission_status='form_opened', updated_at=CURRENT_TIMESTAMP WHERE id=? AND submission_status='not_started'").bind(opened.id),
+      env.DB.prepare(`INSERT INTO application_events (id, application_id, event_type, source, confidence, evidence)
+        VALUES (?, ?, 'application_opened', 'browser', 0.35, 'Official application link opened')`).bind(crypto.randomUUID(), opened.id)
+    ]);
+    return json({ ok: true });
+  }
+
+  const verifySubmission = pathMatch(path, "/api/applications/:id/verify-submission");
+  if (method === "POST" && verifySubmission) {
+    const body = await request.json().catch(() => ({}));
+    const evidence = String(body.evidence || "Manual confirmation").slice(0, 500);
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE applications SET stage='applied', submission_status='confirmed', confirmation_source='manual',
+        confirmation_confidence=0.8, last_verified_at=CURRENT_TIMESTAMP, submitted_at=COALESCE(submitted_at,CURRENT_TIMESTAMP), updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(verifySubmission.id),
+      env.DB.prepare(`INSERT INTO application_events (id, application_id, event_type, source, confidence, evidence)
+        VALUES (?, ?, 'submission_confirmed', 'manual', 0.8, ?)`).bind(crypto.randomUUID(), verifySubmission.id, evidence)
+    ]);
     return json({ ok: true });
   }
 
@@ -437,7 +528,8 @@ async function route(request, env) {
     if (current && !existingVersion) await saveResumeVersion(env, application.id, current.id, {
       resume: before, audit: JSON.parse(current.audit_json || "{}"), coverage: JSON.parse(current.keyword_coverage || "{}"), latex: current.latex_content || "", model: current.model || ""
     }, "Initial tailored resume");
-    const pack = await createTailoredPack(env, profile, job, { instruction });
+    await saveProjectSelections(env, job, evidence);
+    const pack = await createBudgetedPack(env, profile, job, { instruction });
     const jdHash = await contentHash(job.description);
     const tailoredId = current?.id || crypto.randomUUID();
     if (current) {
@@ -539,8 +631,8 @@ async function route(request, env) {
     const body = await request.json();
     const current = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
     const next = { ...current, ...body };
-    await env.DB.prepare(`UPDATE settings SET target_role=?, alternate_titles=?, preferred_locations=?, required_skills=?, excluded_keywords=?, minimum_salary=?, daily_application_limit=?, require_approval=?, followups_enabled=?, followup_days=?, active_from=?, freshness_hours=?, minimum_match_score=?, browser_notifications=?, tailoring_minimum_score=?, must_have_skills=?, internship_titles=?, experience_tolerance_years=?, search_paused=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`)
-      .bind(next.target_role, next.alternate_titles, next.preferred_locations, next.required_skills, next.excluded_keywords, next.minimum_salary, Number(next.daily_application_limit), next.require_approval ? 1 : 0, next.followups_enabled ? 1 : 0, Number(next.followup_days), next.active_from || null, Number(next.freshness_hours || 168), Number(next.minimum_match_score || 65), next.browser_notifications ? 1 : 0, Number(next.tailoring_minimum_score || 75), next.must_have_skills || "", next.internship_titles || "", Number(next.experience_tolerance_years ?? 1), next.search_paused ? 1 : 0).run();
+    await env.DB.prepare(`UPDATE settings SET target_role=?, alternate_titles=?, preferred_locations=?, required_skills=?, excluded_keywords=?, minimum_salary=?, daily_application_limit=?, require_approval=?, followups_enabled=?, followup_days=?, active_from=?, freshness_hours=?, minimum_match_score=?, browser_notifications=?, tailoring_minimum_score=?, must_have_skills=?, internship_titles=?, experience_tolerance_years=?, search_paused=?, ai_daily_budget=?, feedback_learning_enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`)
+      .bind(next.target_role, next.alternate_titles, next.preferred_locations, next.required_skills, next.excluded_keywords, next.minimum_salary, Number(next.daily_application_limit), next.require_approval ? 1 : 0, next.followups_enabled ? 1 : 0, Number(next.followup_days), next.active_from || null, Number(next.freshness_hours || 168), Number(next.minimum_match_score || 65), next.browser_notifications ? 1 : 0, Number(next.tailoring_minimum_score || 75), next.must_have_skills || "", next.internship_titles || "", Number(next.experience_tolerance_years ?? 1), next.search_paused ? 1 : 0, Number(next.ai_daily_budget || 4), next.feedback_learning_enabled ? 1 : 0).run();
     await activity(env, "settings_updated", "Search preferences updated");
     return json({ ok: true });
   }
@@ -563,23 +655,31 @@ async function hashText(value) {
   return [...new Uint8Array(digest).slice(0, 12)].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
+async function processScanTask(env) {
+  const scan = await scanSources(env);
+  const alerts = env.GMAIL_REFRESH_TOKEN ? await syncJobAlertEmails(env) : { discovered: 0 };
+  if (scan.discovered) await notify(env, `ApplyPilot found ${scan.discovered} new matching ${scan.discovered === 1 ? "job" : "jobs"}.`);
+  if (scan.discovered && env.GMAIL_REFRESH_TOKEN) {
+    const profile = await env.DB.prepare("SELECT email FROM candidate_profile WHERE id = 1").first();
+    const lines = scan.matches.map(match => `${match.score}% - ${match.title} at ${match.company}\n${match.location || "Location not listed"}\n${match.applyUrl}`).join("\n\n");
+    await sendNotificationEmail(env, profile?.email, `ApplyPilot: ${scan.discovered} new high-fit ${scan.discovered === 1 ? "job" : "jobs"}`, `New roles passed your eligibility rules:\n\n${lines}\n\nReview now: https://applypilot.pages.dev`);
+    await activity(env, "match_alert", `Immediate email alert sent for ${scan.discovered} new matches`);
+  }
+  if (env.GMAIL_REFRESH_TOKEN) {
+    const replies = await syncRecruiterReplies(env);
+    if (replies.replies) await notify(env, `ApplyPilot detected ${replies.replies} recruiter ${replies.replies === 1 ? "reply" : "replies"}. Follow-ups were stopped.`);
+    await syncApplicationConfirmations(env);
+  }
+  return { ...scan, portalLeads: alerts.discovered };
+}
+
 async function scheduled(env, controller) {
   if (controller.cron === "*/5 * * * *") {
-    const scan = await scanSources(env);
-    const alerts = env.GMAIL_REFRESH_TOKEN ? await syncJobAlertEmails(env) : { discovered: 0 };
-    if (scan.discovered) await notify(env, `ApplyPilot found ${scan.discovered} new matching ${scan.discovered === 1 ? "job" : "jobs"}.`);
-    if (scan.discovered && env.GMAIL_REFRESH_TOKEN) {
-      const profile = await env.DB.prepare("SELECT email FROM candidate_profile WHERE id = 1").first();
-      const lines = scan.matches.map(match => `${match.score}% - ${match.title} at ${match.company}\n${match.location || "Location not listed"}\n${match.applyUrl}`).join("\n\n");
-      await sendNotificationEmail(env, profile?.email, `ApplyPilot: ${scan.discovered} new high-fit ${scan.discovered === 1 ? "job" : "jobs"}`, `New roles passed your eligibility rules:\n\n${lines}\n\nReview now: https://applypilot.pages.dev`);
-      await activity(env, "match_alert", `Immediate email alert sent for ${scan.discovered} new matches`);
+    if (env.TASK_QUEUE) {
+      const bucket = Math.floor(Date.now() / 300000);
+      return enqueueTask(env, "job_scan", {}, `scheduled_scan:${bucket}`);
     }
-    if (env.GMAIL_REFRESH_TOKEN) {
-      const replies = await syncRecruiterReplies(env);
-      if (replies.replies) await notify(env, `ApplyPilot detected ${replies.replies} recruiter ${replies.replies === 1 ? "reply" : "replies"}. Follow-ups were stopped.`);
-      await syncApplicationConfirmations(env);
-    }
-    return { ...scan, portalLeads: alerts.discovered };
+    return processScanTask(env);
   }
   const digestKey = `daily_digest:${new Date().toISOString().slice(0, 10)}`;
   const alreadySent = await env.DB.prepare("SELECT value FROM integration_state WHERE key = ?").bind(digestKey).first();
@@ -616,5 +716,15 @@ export default {
   },
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(scheduled(env, controller));
+  },
+  async queue(batch, env) {
+    for (const message of batch.messages) {
+      try {
+        await runQueuedTask(env, message.body, { job_scan: () => processScanTask(env) });
+        message.ack();
+      } catch {
+        message.retry({ delaySeconds: 60 });
+      }
+    }
   }
 };

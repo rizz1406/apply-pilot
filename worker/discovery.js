@@ -1,10 +1,17 @@
 import { scoreJob, stripHtml } from "./matching.js";
 import { duplicateKey, jobRiskFlags } from "./application-tools.js";
+import { feedbackAdjustment } from "./preference-learning.js";
 
 const getJson = async url => {
   const response = await fetch(url, { headers: { Accept: "application/json", "User-Agent": "ApplyPilot/0.2" } });
   if (!response.ok) throw new Error(`Source returned ${response.status}`);
   return response.json();
+};
+
+const getText = async url => {
+  const response = await fetch(url, { headers: { Accept: "text/html,application/xhtml+xml", "User-Agent": "ApplyPilot/0.3" } });
+  if (!response.ok) throw new Error(`Source returned ${response.status}`);
+  return response.text();
 };
 
 async function greenhouse(source) {
@@ -68,11 +75,65 @@ async function smartrecruiters(source) {
   return jobs;
 }
 
+async function workable(source) {
+  const data = await getJson(`https://www.workable.com/api/accounts/${encodeURIComponent(source.organization)}?details=true`);
+  return (data.results || data.jobs || []).map(job => ({
+    externalId: String(job.shortcode || job.id), provider: "workable", company: source.label,
+    title: job.title, location: job.location?.location_str || [job.city, job.region, job.country].filter(Boolean).join(", ") || "",
+    workplaceType: job.location?.workplace_type || (job.remote ? "Remote" : ""), description: stripHtml(job.description || job.description_html || ""),
+    applyUrl: job.application_url || job.shortlink || job.url || `https://apply.workable.com/j/${job.shortcode}/`,
+    salaryText: typeof job.salary === "object" ? [job.salary.salary_from, job.salary.salary_to, job.salary.salary_currency].filter(Boolean).join(" - ") : job.salary || "", publishedAt: job.published_on || job.created_at || null
+  }));
+}
+
+async function recruitee(source) {
+  const data = await getJson(`https://${encodeURIComponent(source.organization)}.recruitee.com/api/offers/`);
+  return (data.offers || []).map(job => ({
+    externalId: String(job.id || job.slug), provider: "recruitee", company: source.label,
+    title: job.title, location: job.location || job.city || "", workplaceType: job.remote ? "Remote" : "",
+    description: stripHtml(job.description || job.requirements || ""), applyUrl: job.careers_url || job.url,
+    salaryText: job.salary || "", publishedAt: job.published_at || job.created_at || null
+  }));
+}
+
+const jsonLdJobs = value => {
+  const items = [];
+  const visit = node => {
+    if (Array.isArray(node)) return node.forEach(visit);
+    if (!node || typeof node !== "object") return;
+    if (node["@type"] === "JobPosting" || (Array.isArray(node["@type"]) && node["@type"].includes("JobPosting"))) items.push(node);
+    if (node["@graph"]) visit(node["@graph"]);
+  };
+  visit(value);
+  return items;
+};
+
+async function careerpage(source) {
+  const html = await getText(source.organization);
+  const scripts = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  const postings = scripts.flatMap(match => {
+    try { return jsonLdJobs(JSON.parse(match[1])); } catch { return []; }
+  });
+  return postings.map((job, index) => {
+    const address = job.jobLocation?.address || job.jobLocation?.[0]?.address || {};
+    return {
+      externalId: String(job.identifier?.value || job.identifier || job.url || index), provider: "careerpage", company: job.hiringOrganization?.name || source.label,
+      title: job.title, location: [address.addressLocality, address.addressRegion, address.addressCountry].filter(Boolean).join(", "),
+      workplaceType: job.jobLocationType === "TELECOMMUTE" ? "Remote" : "", description: stripHtml(job.description || ""),
+      applyUrl: job.url || source.organization, salaryText: job.baseSalary?.value?.value ? String(job.baseSalary.value.value) : "",
+      publishedAt: job.datePosted || null
+    };
+  });
+}
+
 export async function fetchSource(source) {
   if (source.provider === "greenhouse") return greenhouse(source);
   if (source.provider === "lever") return lever(source);
   if (source.provider === "ashby") return ashby(source);
   if (source.provider === "smartrecruiters") return smartrecruiters(source);
+  if (source.provider === "workable") return workable(source);
+  if (source.provider === "recruitee") return recruitee(source);
+  if (source.provider === "careerpage") return careerpage(source);
   throw new Error(`Unsupported provider: ${source.provider}`);
 }
 
@@ -115,11 +176,14 @@ export async function scanSources(env) {
   } else {
     settings.candidate_years = profile?.experience_at_search || null;
   }
-  const [standard, external] = await Promise.all([
+  const [standard, external, ats, preferenceRows] = await Promise.all([
     env.DB.prepare("SELECT id, provider, organization, label, enabled, last_scanned_at, last_error, 'sources' AS source_table FROM sources WHERE enabled = 1").all(),
-    env.DB.prepare("SELECT id, provider, organization, label, enabled, last_scanned_at, last_error, 'external_sources' AS source_table FROM external_sources WHERE enabled = 1").all()
+    env.DB.prepare("SELECT id, provider, organization, label, enabled, last_scanned_at, last_error, 'external_sources' AS source_table FROM external_sources WHERE enabled = 1").all(),
+    env.DB.prepare("SELECT id, provider, organization, label, enabled, last_scanned_at, last_error, 'ats_sources' AS source_table FROM ats_sources WHERE enabled = 1").all(),
+    env.DB.prepare("SELECT feature_key, weight FROM preference_weights").all()
   ]);
-  const sources = [...standard.results, ...external.results];
+  const sources = [...standard.results, ...external.results, ...ats.results];
+  const preferenceWeights = Object.fromEntries(preferenceRows.results.map(row => [row.feature_key, row.weight]));
   let discovered = 0;
   let expired = 0;
   let considered = 0;
@@ -149,6 +213,12 @@ export async function scanSources(env) {
         const internship = isEarlyCareerJob(job);
         const internshipSettings = internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
         const match = scoreJob(job, internshipSettings);
+        if (settings.feedback_learning_enabled) {
+          const learned = feedbackAdjustment(job, preferenceWeights);
+          match.score = Math.max(0, Math.min(100, match.score + learned.adjustment));
+          match.eligible = match.score >= Number(internshipSettings.minimum_match_score || 55);
+          if (learned.adjustment) match.reasons.push(`Learned preference ${learned.adjustment > 0 ? "+" : ""}${learned.adjustment}`);
+        }
         const id = `${job.provider}:${job.externalId}`;
         // Internship hunting is intentionally broader: retain lower-fit roles in the
         // configured location so the user can prioritize pay and transferable skills.

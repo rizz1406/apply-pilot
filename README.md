@@ -20,7 +20,7 @@ Find high-fit roles, build grounded ATS resume packs, track every application, a
 
 | Discover | Match | Prepare | Track | Follow up |
 | :---: | :---: | :---: | :---: | :---: |
-| Public ATS boards and Gmail job alerts | Skills, role, location, experience, salary and work mode | Truthful ATS-tailored resume pack and audit | Pipeline, activity, documents and application status | Gmail drafts, explicit approval, reply detection |
+| Public ATS boards, official career pages, and Gmail job alerts | Skills, role, location, experience, salary, learned preferences, and work mode | Truthful ATS-tailored resume pack, project selection, and audit | Inbox, proof-aware pipeline, documents, and application events | Gmail drafts, explicit approval, reply detection |
 
 ## The workflow
 
@@ -34,7 +34,8 @@ flowchart LR
     F -->|Yes| G[Create audited<br/>ATS resume pack]
     G --> H[Open official application]
     H --> I[Mark applied]
-    I --> J[Create recruiter draft]
+    I --> V{Submission proof?}
+    V -->|Gmail or manual| J[Create recruiter draft]
     J --> K[Approve and send]
     K --> L[Track reply and pipeline]
 ```
@@ -71,6 +72,7 @@ flowchart TB
     API --> ATS[Greenhouse / Lever<br/>Ashby / SmartRecruiters]
     API --> GMAIL[Gmail API<br/>alerts, send, replies]
     API --> AI[Workers AI<br/>grounded resume wording]
+    API --> QUEUE[Cloudflare Queue<br/>durable scan tasks]
     API -. fallback .-> GEMINI[Gemini<br/>optional fallback]
     CRON[Cloudflare Cron<br/>every 10 minutes] --> API
 ```
@@ -80,6 +82,7 @@ flowchart TB
 | Cloudflare Pages | Responsive web and mobile PWA | Free tier |
 | Cloudflare Worker | API, matching, scheduled scans, Gmail actions | Free tier limits |
 | Cloudflare D1 | Search profile, jobs, applications, outreach, activity | Free tier limits |
+| Cloudflare Queues | Retried and auditable scan tasks | Free tier limits |
 | Gmail API | Alert import, approved sends, reply tracking | Google quota limits |
 | Workers AI | Primary grounded resume wording and audit workflow | Cloudflare free allocation limits |
 | Gemini | Optional fallback when configured | Optional provider quota/limits |
@@ -90,12 +93,22 @@ The cloud scan runs every **10 minutes**, even when your laptop is off. It check
 
 | Direct JD discovery | Official alert and handoff sources |
 | --- | --- |
-| Greenhouse | LinkedIn job alerts |
-| Lever | Naukri job alerts |
-| Ashby | Indeed job alerts |
-| SmartRecruiters | Company and ATS alert emails |
+| Greenhouse, Lever | LinkedIn job alerts |
+| Ashby, SmartRecruiters | Naukri job alerts |
+| Workable, Recruitee | Indeed job alerts |
+| Official career-page JSON-LD | Company and ATS alert emails |
 
 Direct ATS roles include a full job description and can be scored accurately. Portal alert cards are official links, not presumed full JD matches; they require JD review before tailored resume creation.
+
+Teamtailor's official API requires an employer-issued token. Add the company's public careers URL through **Official career page** instead; ApplyPilot reads public `JobPosting` structured data when the site provides it. It never asks for or bypasses employer credentials.
+
+## Decision and verification controls
+
+- **Opportunity Inbox** combines strong matches, follow-ups, replies, submission proof, and interviews into one prioritized queue.
+- **Relevant / Not relevant** feedback adjusts future scores by at most 12 points; hard location, salary, seniority, and exclusion rules still win.
+- **Submission states** distinguish form opened, submitted but unconfirmed, and confirmed through Gmail or recorded manual evidence.
+- **AI budget** is configurable. When the daily allowance is reached, the verified deterministic resume workflow remains available.
+- **Interview cockpit** keeps JD questions, SQL practice, STAR prompts, a 30/60/90 outline, and interviewer questions with the application.
 
 ## Safe automation boundaries
 
@@ -128,7 +141,7 @@ Open `http://127.0.0.1:4173`. Copy `.dev.vars.example` to `.dev.vars`, choose a 
 
 1. Create a Cloudflare account and authenticate Wrangler.
 2. Create a D1 database and place its `database_id` in `wrangler.toml`.
-3. Run `npm.cmd run db:remote`.
+3. Create `applypilot-tasks` and `applypilot-tasks-dlq` Queues, then run `npm.cmd run db:remote`.
 4. Add Worker secrets: `ADMIN_TOKEN`, Google OAuth values, Gmail refresh token, and optionally `GEMINI_API_KEY`.
 5. Run `npm.cmd run deploy` for the Worker and deploy `public/` to Cloudflare Pages.
 6. Set `APP_ORIGIN` to the Pages domain and keep `DEMO_MODE=false`.
@@ -157,4 +170,4 @@ resume-tailor/                    Standalone tailoring prototype/reference
 npm.cmd test
 ```
 
-The suite covers job-board parsers, matching rules, job-alert title handling, Gmail send behavior with mocks, ATS-safe LaTeX, resume claim auditing, and stable application packs.
+The suite covers job-board and career-page parsers, learned preference guardrails, project selection, matching rules, job-alert title handling, Gmail send behavior with mocks, submission verification, interview preparation, ATS-safe LaTeX, resume claim auditing, and stable application packs.

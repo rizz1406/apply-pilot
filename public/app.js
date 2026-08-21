@@ -17,7 +17,7 @@ const SOURCE_PRESETS = [
 ];
 
 const seedState = {
-  activeView: "today",
+  activeView: "inbox",
   scannedAt: null,
   profile: { fullName: "Rizwan Baig", currentTitle: "Data Analyst", homeLocation: "Hyderabad, India" },
   settings: {
@@ -42,10 +42,12 @@ const seedState = {
 };
 
 const navItems = [
+  { id: "inbox", label: "Inbox", glyph: "A" },
   { id: "internships", label: "Early career", glyph: "I" },
   { id: "today", label: "Review", glyph: "R" },
   { id: "pipeline", label: "Pipeline", glyph: "P" },
   { id: "outreach", label: "Outreach", glyph: "O" },
+  { id: "interviews", label: "Interviews", glyph: "Q" },
   { id: "health", label: "Health", glyph: "H" },
   { id: "settings", label: "Settings", glyph: "S" }
 ];
@@ -89,7 +91,8 @@ function mapRemote(data) {
     reasons: parseJson(job.score_reasons, []), riskFlags: parseJson(job.risk_flags, []), applyUrl: job.apply_url, description: job.description
   }));
   const stageMap = { approved: "approved", prepared: "prepared", applied: "applied", outreach: "outreach", interview: "interview", offer: "interview", rejected: "closed", withdrawn: "closed" };
-  state.applications = data.applications.map(item => ({ id: item.id, title: item.title, company: item.company, stage: stageMap[item.stage] || "prepared", updated: item.updated_at, submittedAt: item.submitted_at, score: item.score, applyUrl: item.apply_url, rawStage: item.stage, opportunityType: item.opportunity_type || "full_time",
+  state.applications = data.applications.map(item => ({ id: item.id, jobId: item.job_id, title: item.title, company: item.company, stage: stageMap[item.stage] || "prepared", updated: item.updated_at, submittedAt: item.submitted_at, score: item.score, applyUrl: item.apply_url, rawStage: item.stage, opportunityType: item.opportunity_type || "full_time",
+    submissionStatus: item.submission_status || "not_started", confirmationSource: item.confirmation_source, confirmationConfidence: item.confirmation_confidence,
     tailoredResumeId: item.tailored_resume_id, tailoredResume: parseJson(item.tailored_resume_json, null), resumeAudit: parseJson(item.resume_audit_json, null), keywordCoverage: parseJson(item.keyword_coverage, null), tailoredScore: item.tailored_match_score, latex: item.latex_content, tailoredStatus: item.tailored_status, tailoredModel: item.tailored_model, coverLetter: item.cover_letter }));
   state.outreach = data.outreach.map(item => ({
     id: item.id, applicationId: item.application_id, name: item.recruiter_name || "Recruiter not assigned", email: item.recruiter_email || "",
@@ -112,6 +115,11 @@ function mapRemote(data) {
   state.notifications = data.notifications || [];
   state.evaluation = data.evaluation || null;
   state.documentVersions = data.documentVersions || [];
+  state.feedback = data.feedback || [];
+  state.applicationEvents = data.applicationEvents || [];
+  state.queuedTasks = data.queuedTasks || [];
+  state.aiUsage = data.aiUsage || [];
+  state.projectSelections = data.projectSelections || [];
   state.authMode = data.authMode || "token";
   if (data.profile?.full_name) {
     state.profile = { fullName: data.profile.full_name, email: data.profile.email, currentTitle: data.profile.current_title, homeLocation: data.profile.home_location, targetSalary: data.profile.target_salary, stretchSalary: data.profile.stretch_salary };
@@ -138,6 +146,8 @@ function mapRemote(data) {
       ,internshipTitles: data.settings.internship_titles || "Data Analyst Intern,Business Intelligence Intern,Data Engineering Intern,Analytics Intern"
       ,experienceToleranceYears: data.settings.experience_tolerance_years ?? 2
       ,searchPaused: Boolean(data.settings.search_paused)
+      ,aiDailyBudget: data.settings.ai_daily_budget || 4
+      ,feedbackLearning: Boolean(data.settings.feedback_learning_enabled)
     };
   }
 }
@@ -176,10 +186,12 @@ function saveState() {
 
 function counts() {
   return {
+    inbox: state.jobs.filter(isReviewMatch).length + state.outreach.filter(item => ["draft", "approved"].includes(item.status)).length,
     today: state.jobs.filter(isReviewMatch).length,
     internships: state.jobs.filter(job => job.status === "new" && job.opportunityType === "internship").length,
     pipeline: state.applications.filter(item => item.stage !== "closed").length,
     outreach: state.outreach.filter(item => item.status !== "sent").length,
+    interviews: state.interviews?.length || 0,
     health: (state.sources || []).filter(source => source.last_error).length,
     settings: ""
   };
@@ -192,19 +204,20 @@ function isReviewMatch(job) {
 
 function renderNav(activeView) {
   const totals = counts();
-  const markup = navItems.map(item => `
+  const button = item => `
     <button class="nav-button ${activeView === item.id ? "active" : ""}" data-view="${item.id}">
       <span class="nav-glyph" aria-hidden="true">${item.glyph}</span>
       <span>${item.label}</span>
       <span class="nav-count">${totals[item.id]}</span>
-    </button>`).join("");
-  document.querySelector(".desktop-nav").innerHTML = markup;
-  document.querySelector(".mobile-nav").innerHTML = markup;
+    </button>`;
+  document.querySelector(".desktop-nav").innerHTML = navItems.map(button).join("");
+  const mobileIds = new Set(["inbox", "today", "internships", "pipeline", "outreach", "settings"]);
+  document.querySelector(".mobile-nav").innerHTML = navItems.filter(item => mobileIds.has(item.id)).map(button).join("");
 }
 
 function render() {
-  const titles = { today: "Review jobs", internships: "Early Career & Internships", pipeline: "Application pipeline", outreach: "Recruiter outreach", health: "System health", settings: "Preferences" };
-  const activeView = titles[state.activeView] ? state.activeView : "today";
+  const titles = { inbox: "Opportunity inbox", today: "Review jobs", internships: "Early Career & Internships", pipeline: "Application pipeline", outreach: "Recruiter outreach", interviews: "Interview cockpit", health: "System health", settings: "Preferences" };
+  const activeView = titles[state.activeView] ? state.activeView : "inbox";
   document.querySelector("#page-title").textContent = titles[activeView];
   const initials = state.profile.fullName.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase();
   document.querySelector(".sidebar-profile .avatar").textContent = initials;
@@ -217,13 +230,15 @@ function render() {
   scanToggle.textContent = paused ? "Resume scans" : "Pause scans";
   scanToggle.classList.toggle("danger-button", !paused);
   agentStatus.textContent = paused ? "Scans paused" : "10-min scan active";
-  action.textContent = activeView === "today" || activeView === "internships" ? "Run job scan" : activeView === "settings" ? "Save changes" : activeView === "health" ? "Run checks" : "Add item";
+  action.textContent = ["inbox", "today", "internships"].includes(activeView) ? "Run job scan" : activeView === "settings" ? "Save changes" : activeView === "health" ? "Run checks" : "Add item";
   renderNav(activeView);
   const viewRenderers = {
+    inbox: renderInbox,
     today: renderToday,
     internships: renderInternships,
     pipeline: renderPipeline,
     outreach: renderOutreach,
+    interviews: renderInterviews,
     health: renderHealth,
     settings: renderSettings
   };
@@ -234,6 +249,37 @@ function render() {
     app.innerHTML = `<div class="empty-state render-error"><h2>This view could not load</h2><p>${escapeHtml(error.message)}</p><button class="primary-button" data-action="reload-view">Try again</button></div>`;
   }
   bindViewEvents();
+}
+
+function renderInbox() {
+  const matches = state.jobs.filter(isReviewMatch);
+  const strong = matches.filter(job => Number(job.score) >= 75);
+  const due = state.outreach.filter(item => ["draft", "approved"].includes(item.status));
+  const replies = state.outreach.filter(item => item.status === "replied");
+  const unconfirmed = state.applications.filter(item => item.submissionStatus === "submitted_unconfirmed");
+  const upcoming = state.applications.filter(item => ["interview", "offer"].includes(item.rawStage));
+  const actions = [
+    strong.length && { title: `${strong.length} strong match${strong.length === 1 ? "" : "es"}`, detail: "Fresh roles ready for JD review", view: "today", tone: "match" },
+    due.length && { title: `${due.length} follow-up${due.length === 1 ? "" : "s"} awaiting approval`, detail: "Nothing is sent without your approval", view: "outreach", tone: "followup" },
+    replies.length && { title: `${replies.length} recruiter repl${replies.length === 1 ? "y" : "ies"}`, detail: "Automated follow-ups have stopped", view: "outreach", tone: "reply" },
+    unconfirmed.length && { title: `${unconfirmed.length} submission${unconfirmed.length === 1 ? "" : "s"} need proof`, detail: "Check Gmail or add manual confirmation", view: "pipeline", tone: "verify" },
+    upcoming.length && { title: `${upcoming.length} interview workspace${upcoming.length === 1 ? "" : "s"}`, detail: "Practice SQL, STAR stories, and your 30/60/90 plan", view: "interviews", tone: "interview" }
+  ].filter(Boolean);
+  const aiUsed = (state.aiUsage || []).reduce((sum, row) => sum + Number(row.requests || 0), 0);
+  const aiBudget = Number(state.settings.aiDailyBudget || 4);
+  const recentTask = (state.queuedTasks || [])[0];
+  app.innerHTML = `<section class="inbox-hero"><div><span>One prioritized queue</span><h2>${actions.length ? `${actions.length} action${actions.length === 1 ? " needs" : "s need"} attention` : "You are caught up"}</h2><p>Matches, application proof, recruiter replies, and interviews are ordered here.</p></div><button class="primary-button" data-action="scan">Scan official sources</button></section>
+    <section class="summary-grid">${metric("Strong new matches", strong.length, "75% fit or higher")}${metric("Follow-ups due", due.length, "Approval required")}${metric("Replies", replies.length, "Automation stops")}${metric("Interviews", upcoming.length, "Prep workspaces")}</section>
+    <div class="inbox-layout"><section><div class="section-heading"><div><h2>Next actions</h2><p>Open an item to continue the exact workflow.</p></div></div><div class="action-feed">${actions.length ? actions.map(item => `<button class="action-feed-item ${item.tone}" data-action="go-view" data-view-target="${item.view}"><span class="action-symbol"></span><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></span><b>Open</b></button>`).join("") : `<div class="empty-state"><h2>No action needed</h2><p>ApplyPilot will add fresh matches, confirmations, replies, and interviews here.</p></div>`}</div></section>
+    <aside class="panel system-glance"><h2>Automation today</h2><dl><div><dt>Scanner</dt><dd>${state.settings.searchPaused ? "Paused" : "Active"}</dd></div><div><dt>Last queued task</dt><dd>${escapeHtml(recentTask?.status || "No queued run")}</dd></div><div><dt>AI resume budget</dt><dd>${Math.min(aiUsed, aiBudget)} / ${aiBudget}</dd></div><div><dt>Fallback</dt><dd>Deterministic and truthful</dd></div></dl></aside></div>`;
+}
+
+function renderInterviews() {
+  const rows = (state.interviews || []).map(workspace => {
+    const application = state.applications.find(item => item.id === workspace.application_id);
+    return { ...workspace, application, prep: parseJson(workspace.prep_json, {}) };
+  });
+  app.innerHTML = `<section class="focus-strip"><div class="focus-copy"><span>Interview cockpit</span><h2>${rows.length ? `${rows.length} preparation workspace${rows.length === 1 ? "" : "s"}` : "No interview workspace yet"}</h2><p>JD-specific questions, SQL practice, STAR stories, and a 30/60/90 outline stay with each application.</p></div></section><div class="interview-list">${rows.length ? rows.map(row => `<article class="panel interview-card"><div class="section-heading"><div><span class="badge new">${escapeHtml(row.application?.rawStage || "PREP")}</span><h2>${escapeHtml(row.application?.title || "Interview preparation")}</h2><p>${escapeHtml(row.application?.company || "Tracked application")}</p></div></div><div class="interview-grid"><section><h3>Focus skills</h3><p>${escapeHtml((row.prep.focusSkills || []).join(", ") || "Review the complete JD")}</p><h3>Likely questions</h3><ol>${(row.prep.questions || []).slice(0, 5).map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ol></section><section><h3>SQL practice</h3><ul>${(row.prep.sqlPractice || []).map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul><h3>STAR stories</h3><ul>${(row.prep.starPrompts || []).map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section><section><h3>30 / 60 / 90</h3><ul>${(row.prep.plan306090 || []).map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul><h3>Ask the interviewer</h3><ul>${(row.prep.interviewerQuestions || []).map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section></div></article>`).join("") : `<div class="empty-state"><h2>No preparation workspace</h2><p>Create one from an application resume pack when an interview is scheduled.</p><button class="secondary-button" data-action="go-view" data-view-target="pipeline">Open pipeline</button></div>`}</div>`;
 }
 
 function renderToday() {
@@ -289,6 +335,7 @@ function jobCard(job) {
   const experienceReason = job.reasons.find(reason => /experience requirement|seniority/i.test(reason)) || "Experience level checked";
   const fitLabel = job.score >= 90 ? "Strong match" : job.score >= 75 ? "Good match" : "Eligible match";
   const readiness = job.score >= 75 ? "STRONG FIT" : "REVIEW FIT";
+  const feedback = (state.feedback || []).find(item => item.job_id === job.id)?.relevance;
   return `<article class="job-card" data-job-id="${job.id}">
     <div class="company-logo" style="background:${job.color}">${job.initials}</div>
     <div>
@@ -298,6 +345,7 @@ function jobCard(job) {
     </div>
     <div class="score-block"><div class="score">${job.score}%</div><div class="score-label">MATCH</div></div>
     <div class="job-actions">
+      <div class="relevance-controls" aria-label="Teach matching"><span>Useful?</span><button class="icon-choice ${feedback === 1 ? "selected" : ""}" title="Relevant" data-action="feedback" data-id="${job.id}" data-relevance="1">Yes</button><button class="icon-choice ${feedback === -1 ? "selected" : ""}" title="Not relevant" data-action="feedback" data-id="${job.id}" data-relevance="-1">No</button></div>
       <button class="secondary-button" data-action="skip" data-id="${job.id}">Skip</button>
       <button class="secondary-button" data-action="save" data-id="${job.id}">Save for later</button>
       <button class="secondary-button" data-action="details" data-id="${job.id}">Review</button>
@@ -335,8 +383,12 @@ function renderPipeline() {
     <section class="pipeline"><div class="pipeline-grid">${stages.map(stage => {
       const items = state.applications.filter(item => item.stage === stage.id);
       return `<div class="pipeline-column"><div class="pipeline-header"><span>${stage.label}</span><span>${items.length}</span></div>${items.map(item => `
-        <article class="pipeline-card"><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.company)}</p><div class="application-meta"><span>${item.tailoredResumeId ? "Tailored ATS pack saved" : "Application documents pending"}</span>${item.submittedAt ? `<span>Applied ${escapeHtml(item.submittedAt)}</span>` : `<span>Updated ${escapeHtml(item.updated)}</span>`}</div>${item.tailoredResumeId ? `<button class="text-button" data-action="review-pack" data-id="${escapeHtml(item.id)}">Review resume, audit & history</button>` : ""}<footer><span>${item.updated}</span><span>${item.tailoredScore || item.score}% match</span></footer></article>`).join("")}</div>`;
+        <article class="pipeline-card"><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.company)}</p><span class="submission-pill ${escapeHtml(item.submissionStatus)}">${escapeHtml(submissionLabel(item.submissionStatus))}</span><div class="application-meta"><span>${item.tailoredResumeId ? "Tailored ATS pack saved" : "Application documents pending"}</span>${item.submittedAt ? `<span>Reported ${escapeHtml(item.submittedAt)}</span>` : `<span>Updated ${escapeHtml(item.updated)}</span>`}</div>${item.tailoredResumeId ? `<button class="text-button" data-action="review-pack" data-id="${escapeHtml(item.id)}">Review resume, audit & history</button>` : ""}${item.submissionStatus === "submitted_unconfirmed" ? `<button class="text-button" data-action="verify-submission" data-id="${escapeHtml(item.id)}">Add submission proof</button>` : ""}<footer><span>${item.updated}</span><span>${item.tailoredScore || item.score}% match</span></footer></article>`).join("")}</div>`;
     }).join("")}</div></section>`;
+}
+
+function submissionLabel(status) {
+  return ({ not_started: "Not opened", form_opened: "Form opened", submitted_unconfirmed: "Submitted, unconfirmed", confirmed: "Submission confirmed" })[status] || "Not verified";
 }
 
 function renderOutreach() {
@@ -383,12 +435,14 @@ function renderSettings() {
       ${toggle("approval", "Approve every application", s.approval)}
       ${toggle("followups", "Prepare automatic follow-ups", s.followups)}
       ${toggle("browserNotifications", "Browser notifications", s.browserNotifications)}
+      ${toggle("feedbackLearning", "Learn from relevant / not relevant feedback", s.feedbackLearning)}
+      <div class="field"><label for="ai-budget">AI resume packs per day</label><input id="ai-budget" type="number" min="1" max="12" value="${s.aiDailyBudget || 4}"><small>After this limit, truthful deterministic tailoring remains available for free.</small></div>
       <div class="field" style="margin-top:16px"><label for="api-token">Private API token</label><input id="api-token" type="password" placeholder="Only needed after deployment" value="${localStorage.getItem(API_TOKEN_KEY) || ""}"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:20px"><button class="secondary-button" data-action="connect">Test backend</button><button class="secondary-button" data-action="export-data">Export data</button>${remoteEnabled ? "" : `<button class="secondary-button danger-button" data-action="reset">Reset demo</button>`}</div>
     </section>
     <section class="panel settings-section" style="grid-column:1/-1"><h2>Job sources</h2>
       <div class="preset-row"><strong>Recommended public boards</strong><span>${SOURCE_PRESETS.map(source => `<button class="preset-button" data-action="add-preset" data-preset="${source.organization}">${source.label}</button>`).join("")}</span></div>
-      <div class="settings-grid"><div class="field"><label for="source-provider">Provider</label><select id="source-provider"><option value="greenhouse">Greenhouse</option><option value="lever">Lever</option><option value="ashby">Ashby</option><option value="smartrecruiters">SmartRecruiters</option></select></div><div class="field"><label for="source-org">Board identifier</label><input id="source-org" placeholder="Example: companyname"></div></div>
+      <div class="settings-grid"><div class="field"><label for="source-provider">Provider</label><select id="source-provider"><option value="greenhouse">Greenhouse</option><option value="lever">Lever</option><option value="ashby">Ashby</option><option value="smartrecruiters">SmartRecruiters</option><option value="workable">Workable</option><option value="recruitee">Recruitee</option><option value="careerpage">Official career page (JSON-LD)</option></select></div><div class="field"><label for="source-org">Board identifier or official URL</label><input id="source-org" placeholder="companyname or https://company.com/careers"></div></div>
       <div class="field"><label for="source-label">Company label</label><input id="source-label" placeholder="Company name shown in the app"></div>
       <button class="secondary-button" data-action="add-source">Add source</button>
       <div class="job-list" style="margin-top:14px">${(state.sources || []).map(source => `<div class="toggle-row"><span><strong>${source.label}</strong> · ${source.provider}/${source.organization}</span><button class="text-button danger-button" data-action="delete-source" data-id="${source.id}">Remove</button></div>`).join("") || `<p class="job-company">No live sources configured yet.</p>`}</div>
@@ -417,6 +471,17 @@ function bindViewEvents() {
 
 async function handleAction(event) {
   const { action, id } = event.currentTarget.dataset;
+  if (action === "go-view") { state.activeView = event.currentTarget.dataset.viewTarget; saveState(); return render(); }
+  if (action === "feedback") {
+    try { await api(`/jobs/${encodeURIComponent(id)}/feedback`, { method: "PUT", body: JSON.stringify({ relevance: Number(event.currentTarget.dataset.relevance) }) }); await connectBackend(); return toast("Preference saved. Future scans will use this feedback."); }
+    catch (error) { return toast(error.message, { title: "Could not save feedback", tone: "error" }); }
+  }
+  if (action === "verify-submission") {
+    const evidence = window.prompt("What confirms this submission? Example: confirmation page or email subject.", "Confirmation page shown after submitting");
+    if (!evidence) return;
+    try { await api(`/applications/${encodeURIComponent(id)}/verify-submission`, { method: "POST", body: JSON.stringify({ evidence }) }); await connectBackend(); return toast("Submission marked confirmed with an audit event."); }
+    catch (error) { return toast(error.message, { title: "Could not verify", tone: "error" }); }
+  }
   if (action === "reload-view") return render();
   if (action === "approve") return await approveJob(id);
   if (action === "skip") updateJob(id, "skipped", "Job skipped and removed from your queue");
@@ -425,6 +490,7 @@ async function handleAction(event) {
   if (action === "details") showJob(id);
   if (action === "open-application") {
     const applyUrl = event.currentTarget.dataset.url;
+    if (id && remoteEnabled) api(`/applications/${encodeURIComponent(id)}/opened`, { method: "POST" }).catch(() => {});
     if (applyUrl) window.open(applyUrl, "_blank", "noopener,noreferrer");
     else toast("The official application URL is not available for this record.", { title: "Application link unavailable" });
   }
@@ -484,10 +550,12 @@ function showApplicationPack(id) {
   const versionMarkup = versions.length ? versions.map(version => `<article><div><strong>Version ${version.version_number}</strong><small>${escapeHtml(version.instruction || "Generated for JD")}</small><small>${escapeHtml(version.changeSummary?.summary || "Saved resume snapshot")}</small></div>${version === versions[0] ? `<span class="badge new">CURRENT</span>` : `<button class="text-button" data-restore-version="${version.version_number}">Restore</button>`}</article>`).join("") : `<p class="job-company">Version history starts after the next regeneration.</p>`;
   const checklistMarkup = checklist.length ? checklist.map(entry => `<label class="workflow-check"><input type="checkbox" data-checklist-key="${escapeHtml(entry.item_key)}" ${entry.completed ? "checked" : ""}> <span>${escapeHtml(entry.label)}</span>${entry.required ? `<small>Required</small>` : ""}</label>`).join("") : `<p class="job-company">Checklist will appear after this pack is refreshed.</p>`;
   const answerMarkup = (state.answers || []).filter(answer => answer.value).map(answer => `<button class="answer-copy" data-copy-answer="${escapeHtml(answer.value)}"><span>${escapeHtml(answer.label)}</span><strong>${escapeHtml(answer.value)}</strong></button>`).join("") || `<p class="job-company">Add verified screening answers in Settings.</p>`;
+  const selectedProjects = (state.projectSelections || []).filter(project => String(project.job_id) === String(item.jobId));
   dialog.className = "pack-modal";
   dialog.innerHTML = `<div class="dialog-content pack-dialog"><div class="dialog-header"><div><span class="badge new">${item.tailoredScore || 0}% TAILORED</span><h2>${escapeHtml(item.title)}</h2><p class="job-company">${escapeHtml(item.company)} | ${escapeHtml(item.tailoredStatus || "review")} | ${escapeHtml(modelLabel)}</p></div><button class="dialog-close" aria-label="Close">x</button></div>
     <div class="pack-grid"><section><h3>ATS coverage</h3><strong class="pack-score">${coverage.pct ?? "-"}%</strong><p class="job-company">Matched: ${escapeHtml((coverage.matched || []).join(", ") || "No tracked keywords")}</p><p class="job-company">Missing: ${escapeHtml((coverage.missing || []).join(", ") || "None")}</p></section><section><h3>Truth audit</h3><strong>${escapeHtml(audit.verdict || "review")}</strong><p class="job-company">${Number(audit.autoCorrected || 0)} grounded corrections applied</p><p class="job-company">${escapeHtml((audit.qualityIssues || []).join(" ") || "No quality issues detected")}</p></section></div>
     <div class="match-reasons"><h3>Tailored summary</h3><p>${escapeHtml(item.tailoredResume.summary)}</p><h3>Prioritized skills</h3><p>${escapeHtml(item.tailoredResume.skills)}</p></div>
+    <div class="match-reasons"><h3>Why these projects</h3>${selectedProjects.length ? `<ul>${selectedProjects.map(project => `<li><strong>${escapeHtml(project.title)}</strong>: ${escapeHtml(project.reason)} (${project.relevance_score}% evidence fit)</li>`).join("")}</ul>` : `<p>Your verified master projects were ranked against the JD. Add more projects in the Evidence Library for broader selection.</p>`}</div>
     <div class="match-reasons"><h3>Cover letter</h3><p class="prewrap">${escapeHtml(item.coverLetter || "Not generated")}</p></div>
     <section class="resume-command"><div><h3>Revise this resume</h3><p>Describe what to prioritize or add. Only verified master resume and Evidence Library facts are allowed.</p></div><textarea id="resume-instruction" rows="3" maxlength="600" placeholder="Example: Prioritize my BigQuery pipeline work and add my verified dbt project."></textarea><button class="primary-button" id="regenerate-resume">Create new version</button></section>
     <div class="workflow-grid"><section><div class="workflow-heading"><h3>ATS readiness</h3><strong>${readiness.score}%</strong></div><p class="job-company">${readiness.checks?.filter(check => check.pass).length || 0}/${readiness.checks?.length || 0} automated checks passed. PDF generation also blocks multi-page overflow.</p></section><section><h3>Application checklist</h3><div class="workflow-list">${checklistMarkup}</div></section></div>
@@ -527,7 +595,7 @@ function showApplicationPack(id) {
     catch (error) { input.checked = !input.checked; toast(error.message, { tone: "error" }); }
   });
   dialog.querySelectorAll("[data-copy-answer]").forEach(button => button.onclick = async () => { await navigator.clipboard.writeText(button.dataset.copyAnswer); toast("Verified answer copied."); });
-  dialog.querySelector("#open-application").onclick = () => window.open(item.applyUrl, "_blank", "noopener,noreferrer");
+  dialog.querySelector("#open-application").onclick = async () => { try { await api(`/applications/${encodeURIComponent(item.id)}/opened`, { method: "POST" }); } catch {} window.open(item.applyUrl, "_blank", "noopener,noreferrer"); };
   dialog.querySelector("#mark-applied").onclick = async () => {
     try { await api(`/applications/${encodeURIComponent(item.id)}/stage`, { method: "PUT", body: JSON.stringify({ stage: "applied" }) }); dialog.close(); await connectBackend(); toast("Application marked as applied."); }
     catch (error) { toast(error.message); }
@@ -1067,6 +1135,7 @@ document.addEventListener("click", event => {
 });
 
 document.querySelector("#demo-action").addEventListener("click", async () => {
+  if (state.activeView === "inbox") return runScan();
   if (state.activeView === "today") return runScan();
   if (state.activeView === "internships") return runScan();
   if (state.activeView === "health") return handleAction({ currentTarget: { dataset: { action: "run-evaluation" } } });
@@ -1084,6 +1153,7 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
     state.settings.minimumMatchScore = Number(document.querySelector("#match-score").value) || 65;
     state.settings.tailoringMinimumScore = Number(document.querySelector("#tailoring-score").value) || 75;
     state.settings.mustHaveSkills = document.querySelector("#must-have-skills").value.trim();
+    state.settings.aiDailyBudget = Number(document.querySelector("#ai-budget").value) || 4;
     if (state.settings.browserNotifications && "Notification" in window && Notification.permission === "default") await Notification.requestPermission();
     if (remoteEnabled) {
       try {
@@ -1107,6 +1177,8 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
           ,internship_titles: state.settings.internshipTitles
           ,experience_tolerance_years: state.settings.experienceToleranceYears
           ,search_paused: state.settings.searchPaused
+          ,ai_daily_budget: state.settings.aiDailyBudget
+          ,feedback_learning_enabled: state.settings.feedbackLearning
         }) });
       } catch (error) { return toast(error.message); }
     }
@@ -1136,6 +1208,7 @@ document.querySelector("#scan-toggle").addEventListener("click", async () => {
         minimum_match_score: state.settings.minimumMatchScore || 50, browser_notifications: state.settings.browserNotifications,
         tailoring_minimum_score: state.settings.tailoringMinimumScore || 50, must_have_skills: state.settings.mustHaveSkills || "", internship_titles: state.settings.internshipTitles || "",
         experience_tolerance_years: state.settings.experienceToleranceYears ?? 2, search_paused: state.settings.searchPaused
+        ,ai_daily_budget: state.settings.aiDailyBudget || 4, feedback_learning_enabled: state.settings.feedbackLearning
       }) });
     } catch (error) { state.settings.searchPaused = !state.settings.searchPaused; return toast(error.message, { title: "Could not update scans", tone: "error" }); }
   }

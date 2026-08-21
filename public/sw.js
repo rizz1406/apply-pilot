@@ -1,5 +1,5 @@
-const CACHE = "applypilot-v49";
-const ASSETS = ["./", "./index.html", "./styles.css?v=49", "./app.js?v=49", "./manifest.webmanifest", "./icon.svg", "./resume.cls", "./vendor/jspdf.umd.min.js?v=1", "./fonts/cmu-serif-500-roman.woff2", "./fonts/cmu-serif-700-roman.woff2", "./fonts/cmu-serif-500-italic.woff2", "./fonts/cmu-serif-700-italic.woff2", "./fonts/cmu-serif-500-roman.ttf", "./fonts/cmu-serif-700-roman.ttf", "./fonts/cmu-serif-500-italic.ttf", "./fonts/cmu-serif-700-italic.ttf"];
+const CACHE = "applypilot-v50";
+const ASSETS = ["./", "./index.html", "./styles.css?v=50", "./app.js?v=50", "./manifest.webmanifest", "./icon.svg", "./resume.cls", "./vendor/jspdf.umd.min.js?v=1", "./fonts/cmu-serif-500-roman.woff2", "./fonts/cmu-serif-700-roman.woff2", "./fonts/cmu-serif-500-italic.woff2", "./fonts/cmu-serif-700-italic.woff2", "./fonts/cmu-serif-500-roman.ttf", "./fonts/cmu-serif-700-roman.ttf", "./fonts/cmu-serif-500-italic.ttf", "./fonts/cmu-serif-700-italic.ttf"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));

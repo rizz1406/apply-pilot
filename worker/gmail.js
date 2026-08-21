@@ -86,7 +86,7 @@ export async function syncRecruiterReplies(env) {
 export async function syncApplicationConfirmations(env) {
   const { results: applications } = await env.DB.prepare(`SELECT a.id, j.company, j.title
     FROM applications a JOIN jobs j ON j.id = a.job_id
-    WHERE a.stage IN ('approved','prepared')`).all();
+    WHERE a.stage IN ('approved','prepared','applied') AND COALESCE(a.submission_status, 'not_started') != 'confirmed'`).all();
   if (!applications.length) return { checked: 0, confirmed: 0 };
 
   const after = Math.floor((Date.now() - 14 * 86400000) / 1000);
@@ -105,11 +105,16 @@ export async function syncApplicationConfirmations(env) {
     });
     const application = candidates.length === 1 ? candidates[0] : (companyCandidates.length === 1 ? companyCandidates[0] : null);
     if (!application) continue;
-    const result = await env.DB.prepare("UPDATE applications SET stage = 'applied', submitted_at = COALESCE(submitted_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND stage IN ('approved','prepared')").bind(application.id).run();
+    const result = await env.DB.prepare(`UPDATE applications SET stage='applied', submission_status='confirmed', confirmation_source='gmail',
+      confirmation_confidence=0.98, last_verified_at=CURRENT_TIMESTAMP, submitted_at=COALESCE(submitted_at,CURRENT_TIMESTAMP), updated_at=CURRENT_TIMESTAMP
+      WHERE id=? AND COALESCE(submission_status,'not_started') != 'confirmed'`).bind(application.id).run();
     if (!(result.meta.changes || 0)) continue;
     await env.DB.prepare("INSERT INTO activity_log (event_type, entity_type, entity_id, message) VALUES ('application_confirmed', 'application', ?, ?)")
       .bind(application.id, `Application confirmation detected for ${application.title} at ${application.company}`).run();
     await env.DB.prepare("UPDATE application_checklist SET completed = 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE application_id = ? AND item_key = 'confirmation'").bind(application.id).run();
+    await env.DB.prepare(`INSERT INTO application_events (id, application_id, event_type, source, confidence, evidence, metadata)
+      VALUES (?, ?, 'submission_confirmed', 'gmail', 0.98, ?, ?)`)
+      .bind(crypto.randomUUID(), application.id, headers.subject || "Application confirmation email", JSON.stringify({ gmailMessageId: item.id })).run();
     confirmed += 1;
   }
   return { checked: (listing.messages || []).length, confirmed };

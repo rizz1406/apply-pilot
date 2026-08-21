@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 
-test("renders the Review queue without a runtime error", async () => {
+test("renders the opportunity Inbox without a runtime error", async () => {
   const source = fs.readFileSync(new URL("../app.js", import.meta.url), "utf8");
   const elements = new Map();
   const makeElement = () => ({
@@ -50,7 +50,8 @@ test("renders the Review queue without a runtime error", async () => {
   vm.runInNewContext(source, context);
   await Promise.resolve();
 
-  assert.match(element("#app").innerHTML, /Review 1 new opportunity/);
+  assert.match(element("#app").innerHTML, /1 action needs attention/);
+  assert.match(element("#app").innerHTML, /1 strong match/);
   assert.doesNotMatch(element("#app").innerHTML, /This view could not load/);
   assert.equal(errors.length, 0);
 });

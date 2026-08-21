@@ -19,5 +19,16 @@ database_name = "applypilot"
 database_id = "5d5145ea-980e-48d1-9299-2b38a43cde3f"
 migrations_dir = "migrations"
 
+[[queues.producers]]
+binding = "TASK_QUEUE"
+queue = "applypilot-tasks"
+
+[[queues.consumers]]
+queue = "applypilot-tasks"
+max_batch_size = 5
+max_batch_timeout = 5
+max_retries = 3
+dead_letter_queue = "applypilot-tasks-dlq"
+
 [triggers]
 crons = ["*/5 * * * *", "15 13 * * 1-5"]
