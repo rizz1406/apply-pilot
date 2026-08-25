@@ -347,6 +347,12 @@ main { margin-left: var(--sidebar); min-height: 100vh; }
 .status.sent { background: var(--green-soft); color: var(--green); }
 .status.replied { background: var(--green-soft); color: var(--green); }
 .status.approved { background: var(--amber-soft); color: var(--amber); }
+.automation-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 7px 0 2px; }
+.automation-line small { color: var(--muted); font-size: 10px; }
+.automation-pill { padding: 4px 7px; border-radius: 4px; background: #edf1ee; color: #38463d; font-size: 10px; font-weight: 750; }
+.automation-pill.auto_submit { background: #d8f4e5; color: #087647; }
+.automation-pill.approval { background: #fff0ca; color: #815900; }
+.automation-pill.needs_input { background: #fee2e2; color: #9b1c1c; }
 .compact-button { min-height: 32px; padding: 0 10px; font-size: 11px; }
 .empty-row { padding: 30px !important; color: var(--muted); text-align: center !important; }
 .pack-followup { margin-top: 12px; }

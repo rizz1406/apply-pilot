@@ -88,7 +88,8 @@ function mapRemote(data) {
     color: colors[index % colors.length], location: job.location || "Location not listed",
     mode: job.workplace_type || "Review", salary: job.salary_text || "Salary not listed",
     source: job.provider, score: job.score, age: job.discovered_at, status: job.status, opportunityType: job.opportunity_type || "full_time",
-    reasons: parseJson(job.score_reasons, []), riskFlags: parseJson(job.risk_flags, []), applyUrl: job.apply_url, description: job.description
+    reasons: parseJson(job.score_reasons, []), riskFlags: parseJson(job.risk_flags, []), applyUrl: job.apply_url, description: job.description,
+    automationDecision: job.automation_decision || "unclassified", automationReasons: parseJson(job.automation_reasons, []), automationCapability: parseJson(job.automation_capability, {})
   }));
   const stageMap = { approved: "approved", prepared: "prepared", applied: "applied", outreach: "outreach", interview: "interview", offer: "interview", rejected: "closed", withdrawn: "closed" };
   state.applications = data.applications.map(item => ({ id: item.id, jobId: item.job_id, title: item.title, company: item.company, stage: stageMap[item.stage] || "prepared", updated: item.updated_at, submittedAt: item.submitted_at, score: item.score, applyUrl: item.apply_url, rawStage: item.stage, opportunityType: item.opportunity_type || "full_time",
@@ -148,6 +149,12 @@ function mapRemote(data) {
       ,searchPaused: Boolean(data.settings.search_paused)
       ,aiDailyBudget: data.settings.ai_daily_budget || 4
       ,feedbackLearning: Boolean(data.settings.feedback_learning_enabled)
+      ,automationMode: data.settings.automation_mode || "approval"
+      ,autoApplyMinScore: data.settings.auto_apply_min_score || 88
+      ,approvalMinScore: data.settings.approval_min_score || 65
+      ,autoApplyDailyLimit: data.settings.auto_apply_daily_limit || 3
+      ,trustedCompanies: data.settings.trusted_companies || ""
+      ,blockedCompanies: data.settings.blocked_companies || ""
     };
   }
 }
@@ -286,7 +293,7 @@ function renderToday() {
   const available = state.jobs.filter(isReviewMatch);
   const saved = state.jobs.filter(job => job.status === "shortlisted" && job.opportunityType !== "internship");
   const reviewFilter = state.reviewFilter || "matches";
-  const visible = reviewFilter === "saved" ? saved : reviewFilter === "strong" ? available.filter(job => job.score >= 75) : available;
+  const visible = reviewFilter === "saved" ? saved : reviewFilter === "strong" ? available.filter(job => job.score >= 75) : reviewFilter === "auto" ? available.filter(job => job.automationDecision === "auto_submit") : reviewFilter === "input" ? available.filter(job => job.automationDecision === "needs_input") : reviewFilter === "approval" ? available.filter(job => ["approval", "unclassified"].includes(job.automationDecision)) : available;
   const reviewTotal = available.length;
   const activeApps = state.applications.filter(item => item.stage !== "closed").length;
   const interviews = state.applications.filter(item => ["interview", "offer"].includes(item.rawStage || item.stage)).length;
@@ -302,14 +309,14 @@ function renderToday() {
       <div class="focus-progress"><div><span>Pending review</span><strong>${reviewTotal}</strong></div><div class="focus-progress-bar"><i style="width:${reviewPercent}%"></i></div></div>
     </section>
     <section class="summary-grid" aria-label="Job search summary">
-      ${filterMetric("New matches", available.length, "matches")}
-      ${filterMetric("Strong matches", available.filter(job => job.score >= 75).length, "strong")}
-      ${filterMetric("Saved for later", saved.length, "saved")}
-      ${metric("Applied / follow-up", `${activeApps} / ${followupsReady}`, "Pipeline and drafts")}
+      ${filterMetric("Auto-submit", available.filter(job => job.automationDecision === "auto_submit").length, "auto")}
+      ${filterMetric("Needs approval", available.filter(job => ["approval", "unclassified"].includes(job.automationDecision)).length, "approval")}
+      ${filterMetric("Needs input", available.filter(job => job.automationDecision === "needs_input").length, "input")}
+      ${metric("Applied / follow-up", `${activeApps} / ${followupsReady}`, "Confirmed pipeline and drafts")}
     </section>
     <div class="content-grid">
       <section>
-        <div class="section-heading"><div><h2>${reviewFilter === "saved" ? "Saved for later" : reviewFilter === "strong" ? "Strong matches" : "New matches"}</h2><p>${reviewFilter === "saved" ? "Saved roles are held for 30 days, then removed automatically." : "Each role must pass target-title, skill, India/remote, and experience checks."}</p></div><div class="section-actions"><button class="text-button" data-action="show-matches" data-filter="matches">All</button><button class="text-button" data-action="show-matches" data-filter="strong">Strong</button><button class="text-button" data-action="show-matches" data-filter="saved">Saved</button><button class="text-button" data-action="${remoteEnabled ? "scan" : "reset"}">${remoteEnabled ? "Refresh" : "Reset demo"}</button></div></div>
+        <div class="section-heading"><div><h2>Opportunity queue</h2><p>Every role shows what ApplyPilot can safely do next.</p></div><div class="section-actions"><button class="text-button" data-action="show-matches" data-filter="matches">All</button><button class="text-button" data-action="show-matches" data-filter="auto">Auto-submit</button><button class="text-button" data-action="show-matches" data-filter="approval">Approve</button><button class="text-button" data-action="show-matches" data-filter="input">Needs input</button><button class="text-button" data-action="show-matches" data-filter="saved">Saved</button><button class="text-button" data-action="${remoteEnabled ? "scan" : "reset"}">${remoteEnabled ? "Refresh" : "Reset demo"}</button></div></div>
         <div class="job-list">
           ${visible.length ? visible.map(jobCard).join("") : `<div class="empty-state"><h2>${reviewFilter === "saved" ? "No saved roles" : "No current matches"}</h2><p>${reviewFilter === "saved" ? "Use Save for later on a role you may apply to within 30 days." : "The scanner is running, but it will not fill this list with weak full-time matches."}</p><button class="primary-button" data-action="scan">Run job scan</button></div>`}
         </div>
@@ -336,11 +343,13 @@ function jobCard(job) {
   const fitLabel = job.score >= 90 ? "Strong match" : job.score >= 75 ? "Good match" : "Eligible match";
   const readiness = job.score >= 75 ? "STRONG FIT" : "REVIEW FIT";
   const feedback = (state.feedback || []).find(item => item.job_id === job.id)?.relevance;
+  const decision = ({ auto_submit: "Auto-submit eligible", approval: "Your approval", needs_input: "Needs information", skip: "Below policy" })[job.automationDecision] || "Awaiting policy check";
+  const capability = job.automationCapability?.submission ? "Candidate API available" : "Official portal handoff";
   return `<article class="job-card" data-job-id="${job.id}">
     <div class="company-logo" style="background:${job.color}">${job.initials}</div>
     <div>
       <div class="match-summary"><strong>${job.score}% ${fitLabel}</strong><span>${escapeHtml(skillReason)}</span><span>${escapeHtml(experienceReason)}</span></div><div class="job-title-row"><h3 class="job-title">${job.title}</h3><span class="badge new">${readiness}</span></div>
-      <p class="job-company">${job.company}</p>${job.riskFlags?.length ? `<p class="risk-note">Review: ${escapeHtml(job.riskFlags.join("; "))}</p>` : ""}
+      <p class="job-company">${job.company}</p><div class="automation-line"><span class="automation-pill ${escapeHtml(job.automationDecision)}">${escapeHtml(decision)}</span><small>${escapeHtml(capability)}</small></div>${job.riskFlags?.length ? `<p class="risk-note">Review: ${escapeHtml(job.riskFlags.join("; "))}</p>` : ""}
       <div class="job-meta"><span>${job.location}</span><span>${job.mode}</span><span>${job.salary}</span><span>${job.source}</span></div>
     </div>
     <div class="score-block"><div class="score">${job.score}%</div><div class="score-label">MATCH</div></div>
@@ -349,7 +358,7 @@ function jobCard(job) {
       <button class="secondary-button" data-action="skip" data-id="${job.id}">Skip</button>
       <button class="secondary-button" data-action="save" data-id="${job.id}">Save for later</button>
       <button class="secondary-button" data-action="details" data-id="${job.id}">Review</button>
-      <button class="primary-button" data-action="approve" data-id="${job.id}">Prepare application</button>
+      <button class="primary-button" data-action="approve" data-id="${job.id}">${job.automationDecision === "auto_submit" ? "Review auto-submit" : "Approve & prepare"}</button>
     </div>
   </article>`;
 }
@@ -432,6 +441,13 @@ function renderSettings() {
       <div class="field"><label for="must-have-skills">Required skills for tailoring</label><input id="must-have-skills" value="${escapeHtml(s.mustHaveSkills || "")}" placeholder="SQL, BigQuery"><small>Every listed skill must appear in the full JD.</small></div>
     </section>
     <section class="panel settings-section"><h2>Automation controls</h2>
+      <div class="field"><label for="automation-mode">Application automation</label><select id="automation-mode"><option value="approval" ${s.automationMode !== "auto" ? "selected" : ""}>Approval required</option><option value="auto" ${s.automationMode === "auto" ? "selected" : ""}>Auto-submit when safely supported</option></select><small>Protected portals always require a handoff. A job is never marked applied without submission evidence.</small></div>
+      <div class="field"><label for="auto-score">Automatic submission score</label><input id="auto-score" type="number" min="80" max="100" value="${s.autoApplyMinScore || 88}"></div>
+      <div class="field"><label for="approval-score">Approval queue score</label><input id="approval-score" type="number" min="50" max="95" value="${s.approvalMinScore || 65}"></div>
+      <div class="field"><label for="auto-limit">Maximum automatic submissions per day</label><input id="auto-limit" type="number" min="1" max="10" value="${s.autoApplyDailyLimit || 3}"></div>
+      <div class="field"><label for="trusted-companies">Trusted companies for auto-submit</label><textarea id="trusted-companies" rows="3" placeholder="Leave empty to allow any verified official company">${escapeHtml(s.trustedCompanies || "")}</textarea></div>
+      <div class="field"><label for="blocked-companies">Never apply to</label><textarea id="blocked-companies" rows="3" placeholder="Comma-separated company names">${escapeHtml(s.blockedCompanies || "")}</textarea></div>
+      <button class="secondary-button" data-action="reassess-automation">Reassess active jobs</button>
       ${toggle("approval", "Approve every application", s.approval)}
       ${toggle("followups", "Prepare automatic follow-ups", s.followups)}
       ${toggle("browserNotifications", "Browser notifications", s.browserNotifications)}
@@ -483,6 +499,13 @@ async function handleAction(event) {
     catch (error) { return toast(error.message, { title: "Could not verify", tone: "error" }); }
   }
   if (action === "reload-view") return render();
+  if (action === "reassess-automation") {
+    try {
+      const result = await api("/automation/reassess", { method: "POST" });
+      await connectBackend(); render();
+      return toast(`${result.evaluated} active jobs evaluated. ${result.summary.auto_submit || 0} auto-submit, ${result.summary.approval || 0} approval, ${result.summary.needs_input || 0} need input.`, { title: "Automation queue updated" });
+    } catch (error) { return toast(error.message, { title: "Policy check failed", tone: "error" }); }
+  }
   if (action === "approve") return await approveJob(id);
   if (action === "skip") updateJob(id, "skipped", "Job skipped and removed from your queue");
   if (action === "save") updateJob(id, "shortlisted", "Saved for later. This role is retained for 30 days.");
@@ -1154,6 +1177,12 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
     state.settings.tailoringMinimumScore = Number(document.querySelector("#tailoring-score").value) || 75;
     state.settings.mustHaveSkills = document.querySelector("#must-have-skills").value.trim();
     state.settings.aiDailyBudget = Number(document.querySelector("#ai-budget").value) || 4;
+    state.settings.automationMode = document.querySelector("#automation-mode").value;
+    state.settings.autoApplyMinScore = Number(document.querySelector("#auto-score").value) || 88;
+    state.settings.approvalMinScore = Number(document.querySelector("#approval-score").value) || 65;
+    state.settings.autoApplyDailyLimit = Number(document.querySelector("#auto-limit").value) || 3;
+    state.settings.trustedCompanies = document.querySelector("#trusted-companies").value.trim();
+    state.settings.blockedCompanies = document.querySelector("#blocked-companies").value.trim();
     if (state.settings.browserNotifications && "Notification" in window && Notification.permission === "default") await Notification.requestPermission();
     if (remoteEnabled) {
       try {
@@ -1179,6 +1208,12 @@ document.querySelector("#demo-action").addEventListener("click", async () => {
           ,search_paused: state.settings.searchPaused
           ,ai_daily_budget: state.settings.aiDailyBudget
           ,feedback_learning_enabled: state.settings.feedbackLearning
+          ,automation_mode: state.settings.automationMode
+          ,auto_apply_min_score: state.settings.autoApplyMinScore
+          ,approval_min_score: state.settings.approvalMinScore
+          ,auto_apply_daily_limit: state.settings.autoApplyDailyLimit
+          ,trusted_companies: state.settings.trustedCompanies
+          ,blocked_companies: state.settings.blockedCompanies
         }) });
       } catch (error) { return toast(error.message); }
     }
@@ -1209,6 +1244,9 @@ document.querySelector("#scan-toggle").addEventListener("click", async () => {
         tailoring_minimum_score: state.settings.tailoringMinimumScore || 50, must_have_skills: state.settings.mustHaveSkills || "", internship_titles: state.settings.internshipTitles || "",
         experience_tolerance_years: state.settings.experienceToleranceYears ?? 2, search_paused: state.settings.searchPaused
         ,ai_daily_budget: state.settings.aiDailyBudget || 4, feedback_learning_enabled: state.settings.feedbackLearning
+        ,automation_mode: state.settings.automationMode || "approval", auto_apply_min_score: state.settings.autoApplyMinScore || 88
+        ,approval_min_score: state.settings.approvalMinScore || 65, auto_apply_daily_limit: state.settings.autoApplyDailyLimit || 3
+        ,trusted_companies: state.settings.trustedCompanies || "", blocked_companies: state.settings.blockedCompanies || ""
       }) });
     } catch (error) { state.settings.searchPaused = !state.settings.searchPaused; return toast(error.message, { title: "Could not update scans", tone: "error" }); }
   }

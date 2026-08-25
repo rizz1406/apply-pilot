@@ -30,9 +30,13 @@ flowchart LR
     B --> C{Passes search rules?}
     C -->|No| D[Ignore or keep as portal alert]
     C -->|Yes| E[Score full JD]
-    E --> F{You approve?}
-    F -->|Yes| G[Create audited<br/>ATS resume pack]
-    G --> H[Open official application]
+    E --> F{Automation policy}
+    F -->|88%+ and enabled candidate API| S[Auto-submit eligible queue]
+    F -->|65-87% or portal handoff| G[Approval queue]
+    F -->|Missing answers or risk| N[Needs input]
+    G --> T[Create audited<br/>ATS resume pack]
+    T --> H[Open official application]
+    S --> V
     H --> I[Mark applied]
     I --> V{Submission proof?}
     V -->|Gmail or manual| J[Create recruiter draft]
@@ -50,7 +54,7 @@ Additional:    Senior Data Analyst, BI Analyst, Analytics Engineer, Junior Data 
 Minimum score: 65%  (adjustable from 50% to 95%)
 ```
 
-A resume pack is created only after a job meets the threshold **and you approve it**. This keeps outputs relevant, avoids unnecessary AI usage, and prevents a resume from being generated for weak matches.
+The default policy sends roles scoring **65-87%** to approval and allows roles at **88%+** into the automatic path. Hard conflicts and risk flags always override the score. Automatic submission is enabled only when a candidate-owned provider connector is configured; otherwise ApplyPilot prepares the pack and uses an official portal handoff.
 
 ## Built for a real application history
 
@@ -114,9 +118,9 @@ Teamtailor's official API requires an employer-issued token. Add the company's p
 
 | Automated | Requires your action |
 | --- | --- |
-| Job scanning, filtering, scoring, resume-pack generation, tracking, email drafting, scheduled checks | Portal login, CAPTCHA, declarations, screening questions, final application submission, final recruiter-email approval |
+| Job scanning, filtering, policy routing, JD-specific resume generation, tracking, email drafting, scheduled checks, candidate-API eligibility routing | Portal login, CAPTCHA, declarations, unknown screening answers, protected form submission, final recruiter-email approval |
 
-This design protects your account and keeps submissions truthful. The **Approve & send** button is intentionally required before Gmail sends any recruiter follow-up.
+Every job retains its automation decision and reason. A provider connector must be separately configured and enabled before an eligible item can submit; the default deployment uses official portal handoff. Applications are recorded as confirmed only after provider evidence, Gmail confirmation, or explicit manual proof. The **Approve & send** button remains required before Gmail sends recruiter follow-up.
 
 ## Run locally
 

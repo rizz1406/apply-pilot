@@ -13,6 +13,7 @@ import { rebuildPreferenceWeights } from "./preference-learning.js";
 import { selectProjects } from "./project-selector.js";
 import { aiBudgetStatus, recordAiUsage } from "./ai-budget.js";
 import { enqueueTask, runQueuedTask } from "./task-queue.js";
+import { classifyApplication, persistAutomationDecisions } from "./automation-policy.js";
 
 const json = (data, status = 200, extra = {}) => new Response(JSON.stringify(data), {
   status,
@@ -177,6 +178,14 @@ async function route(request, env) {
     return json({ ok: true, model: pack.model, summary: pack.resume.summary, coverage: pack.coverage, latexTemplate: pack.latex.startsWith("\\documentclass{resume}") });
   }
   if (method === "GET" && path === "/api/bootstrap") return json(await bootstrap(env));
+
+  if (method === "POST" && path === "/api/automation/reassess") {
+    const { results: jobs } = await env.DB.prepare("SELECT * FROM jobs WHERE status IN ('new','shortlisted') ORDER BY score DESC LIMIT 100").all();
+    const decisions = await persistAutomationDecisions(env, jobs);
+    const summary = decisions.reduce((counts, item) => ({ ...counts, [item.policy.action]: (counts[item.policy.action] || 0) + 1 }), {});
+    await activity(env, "automation_reassessed", `Automation policy evaluated ${decisions.length} active jobs`, null, null, summary);
+    return json({ ok: true, evaluated: decisions.length, summary });
+  }
 
   if (method === "POST" && path === "/api/evaluations/run") {
     const settings = await env.DB.prepare("SELECT * FROM settings WHERE id=1").first();
@@ -631,8 +640,8 @@ async function route(request, env) {
     const body = await request.json();
     const current = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
     const next = { ...current, ...body };
-    await env.DB.prepare(`UPDATE settings SET target_role=?, alternate_titles=?, preferred_locations=?, required_skills=?, excluded_keywords=?, minimum_salary=?, daily_application_limit=?, require_approval=?, followups_enabled=?, followup_days=?, active_from=?, freshness_hours=?, minimum_match_score=?, browser_notifications=?, tailoring_minimum_score=?, must_have_skills=?, internship_titles=?, experience_tolerance_years=?, search_paused=?, ai_daily_budget=?, feedback_learning_enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`)
-      .bind(next.target_role, next.alternate_titles, next.preferred_locations, next.required_skills, next.excluded_keywords, next.minimum_salary, Number(next.daily_application_limit), next.require_approval ? 1 : 0, next.followups_enabled ? 1 : 0, Number(next.followup_days), next.active_from || null, Number(next.freshness_hours || 168), Number(next.minimum_match_score || 65), next.browser_notifications ? 1 : 0, Number(next.tailoring_minimum_score || 75), next.must_have_skills || "", next.internship_titles || "", Number(next.experience_tolerance_years ?? 1), next.search_paused ? 1 : 0, Number(next.ai_daily_budget || 4), next.feedback_learning_enabled ? 1 : 0).run();
+    await env.DB.prepare(`UPDATE settings SET target_role=?, alternate_titles=?, preferred_locations=?, required_skills=?, excluded_keywords=?, minimum_salary=?, daily_application_limit=?, require_approval=?, followups_enabled=?, followup_days=?, active_from=?, freshness_hours=?, minimum_match_score=?, browser_notifications=?, tailoring_minimum_score=?, must_have_skills=?, internship_titles=?, experience_tolerance_years=?, search_paused=?, ai_daily_budget=?, feedback_learning_enabled=?, automation_mode=?, auto_apply_min_score=?, approval_min_score=?, auto_apply_daily_limit=?, trusted_companies=?, blocked_companies=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`)
+      .bind(next.target_role, next.alternate_titles, next.preferred_locations, next.required_skills, next.excluded_keywords, next.minimum_salary, Number(next.daily_application_limit), next.require_approval ? 1 : 0, next.followups_enabled ? 1 : 0, Number(next.followup_days), next.active_from || null, Number(next.freshness_hours || 168), Number(next.minimum_match_score || 65), next.browser_notifications ? 1 : 0, Number(next.tailoring_minimum_score || 75), next.must_have_skills || "", next.internship_titles || "", Number(next.experience_tolerance_years ?? 1), next.search_paused ? 1 : 0, Number(next.ai_daily_budget || 4), next.feedback_learning_enabled ? 1 : 0, next.automation_mode || "approval", Number(next.auto_apply_min_score || 88), Number(next.approval_min_score || 65), Number(next.auto_apply_daily_limit || 3), next.trusted_companies || "", next.blocked_companies || "").run();
     await activity(env, "settings_updated", "Search preferences updated");
     return json({ ok: true });
   }
@@ -657,6 +666,7 @@ async function hashText(value) {
 
 async function processScanTask(env) {
   const scan = await scanSources(env);
+  const decisions = await persistAutomationDecisions(env, scan.matches || []);
   const alerts = env.GMAIL_REFRESH_TOKEN ? await syncJobAlertEmails(env) : { discovered: 0 };
   if (scan.discovered) await notify(env, `ApplyPilot found ${scan.discovered} new matching ${scan.discovered === 1 ? "job" : "jobs"}.`);
   if (scan.discovered && env.GMAIL_REFRESH_TOKEN) {
@@ -670,7 +680,8 @@ async function processScanTask(env) {
     if (replies.replies) await notify(env, `ApplyPilot detected ${replies.replies} recruiter ${replies.replies === 1 ? "reply" : "replies"}. Follow-ups were stopped.`);
     await syncApplicationConfirmations(env);
   }
-  return { ...scan, portalLeads: alerts.discovered };
+  const automation = decisions.reduce((counts, item) => ({ ...counts, [item.policy.action]: (counts[item.policy.action] || 0) + 1 }), {});
+  return { ...scan, portalLeads: alerts.discovered, automation };
 }
 
 async function scheduled(env, controller) {
