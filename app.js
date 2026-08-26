@@ -587,7 +587,7 @@ function showApplicationPack(id) {
     <details class="workflow-details"><summary>Screening answer library</summary><div class="answer-list">${answerMarkup}</div></details>
     <div class="dialog-actions"><button class="secondary-button" id="view-resume">View resume</button><button class="secondary-button" id="download-json">Resume JSON</button><button class="secondary-button" id="download-tex">LaTeX</button><button class="secondary-button" id="download-pdf">Download PDF</button><button class="secondary-button" id="open-application">Open application</button><button class="secondary-button" id="mark-applied">Mark applied</button>${resumeApproved ? `<span class="approval-note">Resume approved</span>` : `<button class="primary-button" id="approve-tailored">Approve resume</button>`}</div>
     <button class="text-button pack-followup" id="prepare-interview">Create interview workspace</button>
-    <button class="text-button pack-followup" id="create-followup">Create recruiter follow-up</button></div>`;
+    ${item.submissionStatus === "confirmed" ? `<button class="text-button pack-followup" id="create-followup">Create recruiter follow-up</button>` : `<span class="approval-note pack-followup">Follow-up unlocks after submission confirmation</span>`}</div>`;
   dialog.showModal();
   dialog.querySelector(".dialog-close").onclick = () => dialog.close();
   dialog.querySelector("#view-resume").onclick = () => showResumePreview(item);
@@ -627,7 +627,7 @@ function showApplicationPack(id) {
     try { await api(`/tailored-resumes/${encodeURIComponent(item.tailoredResumeId)}/approve`, { method: "POST" }); dialog.close(); await connectBackend(); toast("Resume approved. Application moved to Ready to apply."); }
     catch (error) { toast(error.message); }
   };
-  dialog.querySelector("#create-followup").onclick = () => showFollowupComposer(item);
+  dialog.querySelector("#create-followup")?.addEventListener("click", () => showFollowupComposer(item));
   dialog.querySelector("#prepare-interview").onclick = () => createInterviewWorkspace(item);
 }
 

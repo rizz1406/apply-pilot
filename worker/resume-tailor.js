@@ -114,7 +114,9 @@ function qualityChecks(resume) {
   if (bullets.some(item => /^(responsible for|helped|worked on|assisted with)/i.test(item))) issues.push("One or more bullets use weak opening language.");
   if (bullets.some(item => item.split(/\s+/).length > 32)) issues.push("One or more bullets exceed 32 words.");
   if (resume.summary.split(/\s+/).length > 55) issues.push("Summary exceeds 55 words.");
-  if (resume.skills.split(",").filter(Boolean).length > 24) issues.push("Skills section may be keyword-stuffed.");
+  const skillCount = resume.skills.split(",").filter(Boolean).length;
+  const hasStructuredSkills = (resume.skillsStructured || []).some(item => item.category && item.details);
+  if ((!hasStructuredSkills && skillCount > 24) || skillCount > 50) issues.push("Skills section may be keyword-stuffed.");
   return issues;
 }
 
@@ -226,11 +228,11 @@ function createDeterministicPack(profile, job, error) {
     corrections: [],
     qualityIssues,
     autoCorrected: 0,
-    verdict: "review",
+    verdict: qualityIssues.length ? "review" : "pass",
     fallback: true,
     fallbackReason: error?.message || "AI provider unavailable"
   };
-  return { resume, audit, coverage, latex: buildLatex(resume), status: "review", model: "deterministic-fallback" };
+  return { resume, audit, coverage, latex: buildLatex(resume), status: audit.verdict === "pass" ? "audit_pass" : "review", model: "deterministic-fallback" };
 }
 
 const latexEscape = value => text(value).replace(/([#$%&_{}])/g, "\\$1").replace(/~/g, "\\textasciitilde{}").replace(/\^/g, "\\textasciicircum{}");

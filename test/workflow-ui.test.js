@@ -21,3 +21,11 @@ test("blocks PDF download when verified evidence overflows one page", () => {
   assert.match(app, /doc\.getNumberOfPages\(\) > 1/);
   assert.match(app, /exceeds one page/);
 });
+
+test("follow-up requires confirmed submission and repeated preparation preserves applied stages", () => {
+  const worker = fs.readFileSync(new URL("../worker/index.js", import.meta.url), "utf8");
+  const frontend = fs.readFileSync(new URL("../app.js", import.meta.url), "utf8");
+  assert.match(worker, /submission_status='confirmed'/);
+  assert.match(worker, /applications\.stage IN \('applied','outreach','interview','offer'\)/);
+  assert.match(frontend, /Follow-up unlocks after submission confirmation/);
+});

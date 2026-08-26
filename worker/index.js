@@ -417,7 +417,11 @@ async function route(request, env) {
       const resume = variants.find(variant => variant.target_titles.split(",").some(target => title.includes(target.trim().toLowerCase()))) || variants[0];
       const applicationId = crypto.randomUUID();
       await env.DB.prepare(`INSERT INTO applications (id, job_id, stage, resume_variant, cover_letter, screening_answers, tailored_resume_id)
-        VALUES (?, ?, 'prepared', ?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET stage = 'prepared', resume_variant=excluded.resume_variant, cover_letter = excluded.cover_letter, screening_answers = excluded.screening_answers, tailored_resume_id=excluded.tailored_resume_id, updated_at = CURRENT_TIMESTAMP`)
+        VALUES (?, ?, 'prepared', ?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET
+          stage = CASE WHEN applications.stage IN ('applied','outreach','interview','offer') THEN applications.stage ELSE 'prepared' END,
+          resume_variant=excluded.resume_variant, cover_letter=excluded.cover_letter,
+          screening_answers=excluded.screening_answers, tailored_resume_id=excluded.tailored_resume_id,
+          updated_at=CURRENT_TIMESTAMP`)
         .bind(applicationId, job.id, resume?.name || null, draft.coverLetter || "", JSON.stringify({ summary: draft.screeningSummary || "" }), tailored.id).run();
       application = await env.DB.prepare("SELECT * FROM applications WHERE job_id = ?").bind(job.id).first();
       await env.DB.batch([
@@ -530,7 +534,7 @@ async function route(request, env) {
     if (!master) return json({ error: "Verified master resume profile is missing" }, 409);
     const { results: evidence } = await env.DB.prepare("SELECT * FROM verified_evidence WHERE verified = 1 AND active = 1 ORDER BY created_at").all();
     const profile = mergeVerifiedEvidence(JSON.parse(master.profile_json), evidence);
-    const job = { title: application.title, company: application.company, description: application.description || "", score: application.score };
+    const job = { id: application.job_id, title: application.title, company: application.company, description: application.description || "", score: application.score };
     const current = application.tailored_resume_id ? await env.DB.prepare("SELECT * FROM tailored_resumes WHERE id = ?").bind(application.tailored_resume_id).first() : null;
     const before = current ? JSON.parse(current.resume_json) : {};
     const existingVersion = await env.DB.prepare("SELECT id FROM resume_versions WHERE application_id = ? LIMIT 1").bind(application.id).first();
@@ -589,6 +593,8 @@ async function route(request, env) {
     const body = await request.json();
     if (!body.applicationId || !body.recruiterEmail || !body.subject || !body.body) return json({ error: "applicationId, recruiterEmail, subject and body are required" }, 400);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.recruiterEmail.trim())) return json({ error: "A valid recruiter email is required" }, 400);
+    const confirmedApplication = await env.DB.prepare("SELECT id FROM applications WHERE id=? AND submission_status='confirmed'").bind(body.applicationId).first();
+    if (!confirmedApplication) return json({ error: "Confirm the application submission before creating recruiter follow-up" }, 409);
     const id = crypto.randomUUID();
     await env.DB.prepare(`INSERT INTO outreach (id, application_id, recruiter_name, recruiter_email, subject, body, scheduled_for)
       VALUES (?, ?, ?, ?, ?, ?, ?)`)

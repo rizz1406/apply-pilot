@@ -53,9 +53,28 @@ test("creates a truthful resume pack when Gemini quota is unavailable", async ()
   const pack = await createTailoredPack({}, profile, { title: "Data Analyst", company: "Acme", description: "Requires SQL and BigQuery", score: 76 });
   assert.equal(pack.model, "deterministic-fallback");
   assert.equal(pack.audit.fallback, true);
+  assert.equal(pack.audit.verdict, "pass");
+  assert.equal(pack.status, "audit_pass");
   assert.equal(pack.resume.experienceStructured[0].company, "DataBeat");
   assert.deepEqual(pack.coverage.missing, []);
   assert.match(pack.latex, /DataBeat/);
+});
+
+test("does not flag a verified categorized skills table as keyword stuffing", async () => {
+  const skills = Array.from({ length: 30 }, (_, index) => `Verified Skill ${index + 1}`).join(", ");
+  const profile = {
+    name: "Rizwan Baig", title: "Data Analyst", email: "test@example.com", phone: "123", location: "Hyderabad",
+    summary: "Data Analyst building reporting workflows with verified production experience.", skills,
+    skillsStructured: [
+      { category: "Databases & SQL", details: "BigQuery, SQL, window functions, CTEs" },
+      { category: "Programming", details: "Python, API integration, QA automation" }
+    ],
+    experience: [{ role: "Data Analyst", company: "DataBeat", location: "Hyderabad", dates: "2025 - Present", bullets: ["Built SQL reporting pipelines."] }],
+    projects: [], education: [], certifications: []
+  };
+  const pack = await createTailoredPack({}, profile, { title: "Data Analyst", company: "Acme", description: "Requires SQL and BigQuery", score: 80 });
+  assert.equal(pack.audit.verdict, "pass");
+  assert.doesNotMatch(pack.audit.qualityIssues.join(" "), /keyword-stuffed/i);
 });
 
 test("falls back immediately after one Gemini 429 response", async () => {
