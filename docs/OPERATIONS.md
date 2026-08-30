@@ -16,11 +16,11 @@ openssl enc -d -aes-256-cbc -pbkdf2 -in applypilot-backup.json.enc -out applypil
 
 The Health page records every source response, retry count, duration, job count, matching evaluation, and document snapshot. A failed board is retried three times. Source failures remain visible in the notification center and do not stop other sources.
 
-## Daily use
+## Daily use (Hyd/Blr private + Freelance)
 
 1. Open `https://applypilot.pages.dev` on desktop or mobile.
-2. Review new scored jobs. Use official portal links for alert-only cards.
-3. Approve a suitable job to create its tailored application pack.
+2. Review new scored **Jobs** in `Review`, **Internships** in `Early career`, and **Gigs** in `Freelance` (Hyd/Bangalore/Remote India only). Use official portal links for alert-only cards.
+3. Approve a suitable job/gig to create its tailored application pack (freelance reuses same truth-grounded tailoring, no salary gate).
 4. Download the generated resume if required, then finish the application on the official job site.
 5. Select **Mark applied** after the portal confirms the submission.
 6. Create a recruiter follow-up only when you have a real recruiter email address.
@@ -28,20 +28,22 @@ The Health page records every source response, retry count, duration, job count,
 
 ## What the counts mean
 
-- **Review**: jobs waiting for a decision or JD import.
-- **Pipeline**: applications you have prepared, applied to, or moved through later stages.
+- **Review**: full-time jobs waiting for a decision or JD import (excludes internship/freelance).
+- **Early career**: internship/new-grad/trainee roles (`opportunity_type=internship`, broad `40%+` gate).
+- **Freelance**: contract/freelance/hourly/gig roles (`opportunity_type=freelance`, broad gate, budget shown).
+- **Pipeline**: applications you have prepared, applied to, or moved through later stages (all types).
 - **Outreach**: recruiter-email drafts, sent messages, and detected replies.
 - **Follow-ups ready**: saved drafts that require explicit approval before Gmail can send them.
 
 ## Job sources
 
-The scheduled scan uses configured public company career boards supported by Greenhouse, Lever, Ashby, and SmartRecruiters. Gmail imports official job links from selected job-alert messages.
+The scheduled scan (`wrangler.toml:34` every `5` minutes via `applypilot-tasks` Queue) uses configured public company career boards supported by Greenhouse, Lever, Ashby, and SmartRecruiters, plus Workable/Recruitee and Official career-page JSON-LD. Gmail imports official job links from selected job-alert messages. **Freelance** is derived from ATS titles/descriptions matching `freelance|contract|gig|hourly|upwork|fiverr` and uses `freelance_titles` (`migrations/0019_freelance.sql`) with no `minimum_salary` gate.
 
 LinkedIn and Naukri can be used as official destinations and alert sources. Their protected applicant flows are not scraped or auto-submitted.
 
 ## Recommended job-search routine
 
-- Keep the ten-minute scan enabled while actively applying.
+- Keep the **five-minute** scan enabled while actively applying.
 - Review newly scored roles promptly, especially fresh postings.
 - Use the tailored resume only for the application associated with that job.
 - Record the portal confirmation after submitting, so follow-ups stay accurate.
@@ -52,4 +54,8 @@ LinkedIn and Naukri can be used as official destinations and alert sources. Thei
 - **No direct matches**: add or correct public ATS company sources and review your search preferences.
 - **Portal card has no score**: open the official posting and import the complete JD where supported.
 - **Email cannot send**: reconnect Gmail OAuth, check the recruiter email, and ensure Worker secrets are configured.
-- **Changes do not appear**: refresh the PWA once to update its service-worker cache.
+- **Changes do not appear**: refresh the PWA once to update its service-worker cache (`sw.js` is `applypilot-v52`, assets `?v=52` `public/` synced from root).
+
+## Opencode model routing
+
+`opencode.json:1` auto-routes: `build->opencode/nemotron-3-ultra-free`, `plan->opencode/muse-spark-1.2-contributor-free`, `explore->opencode/mimo-v2.5-free`, `general->nemotron-3-ultra`. Restart opencode after editing config. Verify with `npx opencode debug config` and `npx opencode debug agent build` (should show `nemotron-3-ultra-free`). The TUI header still says Muse Spark until you switch to `build` mode (press `Tab` or `/agent build`).

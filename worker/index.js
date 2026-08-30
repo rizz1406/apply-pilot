@@ -252,14 +252,16 @@ async function route(request, env) {
       salaryText: body.salaryText?.trim() || ""
     };
     const internship = /\bintern(?:ship)?\b/i.test(candidate.title);
-    const scoreSettings = internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
+    const freelance = /\b(?:freelance|contract(?:or)?|gig|part[ -]?time|hourly|per[ -]?hour|project[ -]?based|upwork|fiverr|toptal|contra)\b/i.test(`${candidate.title} ${candidate.description}`);
+    const scoreSettings = freelance ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.freelance_titles || ""}`, minimum_salary: null } : internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
     const match = scoreJob(candidate, scoreSettings);
-    const eligible = match.eligible || (internship && match.score >= 40);
+    const eligible = match.eligible || ((internship || freelance) && match.score >= 40);
+    const opportunityType = freelance ? "freelance" : internship ? "internship" : "full_time";
     const id = `alert:${await hashText(lead.url)}`;
     await env.DB.prepare(`INSERT INTO jobs (id, external_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, score, score_reasons, status, opportunity_type)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET company=excluded.company, title=excluded.title, location=excluded.location, workplace_type=excluded.workplace_type, description=excluded.description, salary_text=excluded.salary_text, score=excluded.score, score_reasons=excluded.score_reasons, status=excluded.status, opportunity_type=excluded.opportunity_type`)
-      .bind(id, lead.id, lead.provider, candidate.company, candidate.title, candidate.location, candidate.workplaceType, candidate.description.slice(0, 30000), candidate.applyUrl, candidate.salaryText, match.score, JSON.stringify(match.reasons), eligible ? "new" : "skipped", internship ? "internship" : "full_time").run();
+      .bind(id, lead.id, lead.provider, candidate.company, candidate.title, candidate.location, candidate.workplaceType, candidate.description.slice(0, 30000), candidate.applyUrl, candidate.salaryText, match.score, JSON.stringify(match.reasons), eligible ? "new" : "skipped", opportunityType).run();
     await env.DB.prepare("UPDATE job_leads SET status = 'imported' WHERE id = ?").bind(lead.id).run();
     await activity(env, "portal_job_scored", `${candidate.title} at ${candidate.company} scored ${match.score}%`, "job", id, { eligible });
     return json({ ok: true, id, ...match, eligible }, 201);
@@ -280,12 +282,14 @@ async function route(request, env) {
     const settings = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
     const candidate = { title: body.title.trim(), company: body.company.trim(), location: body.location || "", workplaceType: body.workplaceType || "", description: body.description || "", applyUrl: parsedUrl.toString() };
     const internship = body.opportunityType === "internship" || /\bintern(?:ship)?\b/i.test(candidate.title);
-    const scoreSettings = internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
+    const freelance = body.opportunityType === "freelance" || /\b(?:freelance|contract(?:or)?|gig|part[ -]?time|hourly|per[ -]?hour|project[ -]?based|upwork|fiverr|toptal|contra)\b/i.test(`${candidate.title} ${candidate.description}`);
+    const opportunityType = freelance ? "freelance" : internship ? "internship" : "full_time";
+    const scoreSettings = freelance ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.freelance_titles || ""}`, minimum_salary: null } : internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
     const match = scoreJob(candidate, scoreSettings);
     const id = `manual:${crypto.randomUUID()}`;
     await env.DB.prepare(`INSERT INTO jobs (id, external_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, score, score_reasons, opportunity_type)
       VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(id, id, candidate.company, candidate.title, candidate.location, candidate.workplaceType, candidate.description.slice(0, 30000), candidate.applyUrl, body.salaryText || "", match.score, JSON.stringify(match.reasons), internship ? "internship" : "full_time").run();
+      .bind(id, id, candidate.company, candidate.title, candidate.location, candidate.workplaceType, candidate.description.slice(0, 30000), candidate.applyUrl, body.salaryText || "", match.score, JSON.stringify(match.reasons), opportunityType).run();
     await activity(env, "job_added", `Manually added ${candidate.title} at ${candidate.company}`, "job", id);
     return json({ ok: true, id, score: match.score }, 201);
   }
@@ -646,8 +650,8 @@ async function route(request, env) {
     const body = await request.json();
     const current = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
     const next = { ...current, ...body };
-    await env.DB.prepare(`UPDATE settings SET target_role=?, alternate_titles=?, preferred_locations=?, required_skills=?, excluded_keywords=?, minimum_salary=?, daily_application_limit=?, require_approval=?, followups_enabled=?, followup_days=?, active_from=?, freshness_hours=?, minimum_match_score=?, browser_notifications=?, tailoring_minimum_score=?, must_have_skills=?, internship_titles=?, experience_tolerance_years=?, search_paused=?, ai_daily_budget=?, feedback_learning_enabled=?, automation_mode=?, auto_apply_min_score=?, approval_min_score=?, auto_apply_daily_limit=?, trusted_companies=?, blocked_companies=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`)
-      .bind(next.target_role, next.alternate_titles, next.preferred_locations, next.required_skills, next.excluded_keywords, next.minimum_salary, Number(next.daily_application_limit), next.require_approval ? 1 : 0, next.followups_enabled ? 1 : 0, Number(next.followup_days), next.active_from || null, Number(next.freshness_hours || 168), Number(next.minimum_match_score || 65), next.browser_notifications ? 1 : 0, Number(next.tailoring_minimum_score || 75), next.must_have_skills || "", next.internship_titles || "", Number(next.experience_tolerance_years ?? 1), next.search_paused ? 1 : 0, Number(next.ai_daily_budget || 4), next.feedback_learning_enabled ? 1 : 0, next.automation_mode || "approval", Number(next.auto_apply_min_score || 88), Number(next.approval_min_score || 65), Number(next.auto_apply_daily_limit || 3), next.trusted_companies || "", next.blocked_companies || "").run();
+    await env.DB.prepare(`UPDATE settings SET target_role=?, alternate_titles=?, preferred_locations=?, required_skills=?, excluded_keywords=?, minimum_salary=?, daily_application_limit=?, require_approval=?, followups_enabled=?, followup_days=?, active_from=?, freshness_hours=?, minimum_match_score=?, browser_notifications=?, tailoring_minimum_score=?, must_have_skills=?, internship_titles=?, freelance_titles=?, experience_tolerance_years=?, search_paused=?, ai_daily_budget=?, feedback_learning_enabled=?, automation_mode=?, auto_apply_min_score=?, approval_min_score=?, auto_apply_daily_limit=?, trusted_companies=?, blocked_companies=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`)
+      .bind(next.target_role, next.alternate_titles, next.preferred_locations, next.required_skills, next.excluded_keywords, next.minimum_salary, Number(next.daily_application_limit), next.require_approval ? 1 : 0, next.followups_enabled ? 1 : 0, Number(next.followup_days), next.active_from || null, Number(next.freshness_hours || 168), Number(next.minimum_match_score || 65), next.browser_notifications ? 1 : 0, Number(next.tailoring_minimum_score || 75), next.must_have_skills || "", next.internship_titles || "", next.freelance_titles || "", Number(next.experience_tolerance_years ?? 1), next.search_paused ? 1 : 0, Number(next.ai_daily_budget || 4), next.feedback_learning_enabled ? 1 : 0, next.automation_mode || "approval", Number(next.auto_apply_min_score || 88), Number(next.approval_min_score || 65), Number(next.auto_apply_daily_limit || 3), next.trusted_companies || "", next.blocked_companies || "").run();
     await activity(env, "settings_updated", "Search preferences updated");
     return json({ ok: true });
   }

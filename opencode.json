@@ -1,0 +1,36 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/nemotron-3-ultra-free",
+  "small_model": "opencode/muse-spark-1.2-contributor-free",
+  "agent": {
+    "plan": {
+      "model": "opencode/muse-spark-1.2-contributor-free",
+      "description": "Planning, auditing, and read-only analysis (Hyderabad/Bangalore private scope)",
+      "mode": "primary"
+    },
+    "build": {
+      "model": "opencode/nemotron-3-ultra-free",
+      "description": "Coding, Workers, PWA, and discovery work (primary builder)",
+      "mode": "primary"
+    },
+    "explore": {
+      "model": "opencode/mimo-v2.5-free",
+      "description": "Fast codebase exploration and search",
+      "mode": "subagent"
+    },
+    "general": {
+      "model": "opencode/nemotron-3-ultra-free",
+      "description": "General-purpose fallback (uses Ultra)",
+      "mode": "subagent"
+    }
+  },
+  "provider": {
+    "opencode": {
+      "models": {
+        "nemotron-3-lightning-free": {
+          "name": "Nemotron 3 Lightning Free (fast edits)"
+        }
+      }
+    }
+  }
+}

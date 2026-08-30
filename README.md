@@ -16,20 +16,22 @@ Find high-fit roles, build grounded ATS resume packs, track every application, a
 > [!IMPORTANT]
 > ApplyPilot does not bypass job-board logins, CAPTCHA, legal declarations, or protected applicant forms. It automates the work around those steps and hands off the official submission safely.
 
-## What it does
+## What it does (Private: Hyderabad / Bangalore / Remote India)
 
 | Discover | Match | Prepare | Track | Follow up |
 | :---: | :---: | :---: | :---: | :---: |
-| Public ATS boards, official career pages, and Gmail job alerts | Skills, role, location, experience, salary, learned preferences, and work mode | Truthful ATS-tailored resume pack, project selection, and audit | Inbox, proof-aware pipeline, documents, and application events | Gmail drafts, explicit approval, reply detection |
+| Public ATS boards, official career pages, Gmail job alerts, **and freelance/contract boards** | Skills, role, location (Hyd/Blr/Remote India), experience, salary/budget, learned preferences | Truthful ATS-tailored resume pack, project selection, and audit | Inbox, **Jobs / Early-career / Freelance** pipelines, documents, and application events | Gmail drafts, explicit approval, reply detection |
+
+> **New:** `Freelance & Contracts` tab tracks `freelance / contract / hourly / gig / project-based` roles separately from full-time and internship roles. Same `Score -> Approve -> Tailored Resume -> Ready to apply` workflow, with budget shown instead of CTC. `opencode.json` auto-routes `plan->muse-spark-1.2` / `build->nemotron-3-ultra` / `explore->mimo`.
 
 ## The workflow
 
 ```mermaid
 flowchart LR
-    A[Public ATS boards<br/>Gmail job alerts] --> B[10-minute cloud scan]
-    B --> C{Passes search rules?}
+    A[Public ATS boards<br/>Freelance boards<br/>Gmail job alerts] --> B[5-minute cloud scan + Queue]
+    B --> C{Passes Hyd/Blr/Remote rules?}
     C -->|No| D[Ignore or keep as portal alert]
-    C -->|Yes| E[Score full JD]
+    C -->|Yes| E[Score full JD (internship/freelance use broad 40%+ gate, no salary gate)]
     E --> F{Automation policy}
     F -->|88%+ and enabled candidate API| S[Auto-submit eligible queue]
     F -->|65-87% or portal handoff| G[Approval queue]
@@ -73,12 +75,12 @@ Use **Review resume, audit & history** on a pipeline card to inspect the pack ti
 flowchart TB
     UI[Installable web app<br/>Cloudflare Pages] --> API[ApplyPilot API<br/>Cloudflare Worker]
     API --> DB[(Cloudflare D1<br/>applications and history)]
-    API --> ATS[Greenhouse / Lever<br/>Ashby / SmartRecruiters]
+    API --> ATS[Greenhouse / Lever<br/>Ashby / SmartRecruiters / Workable / Recruitee / Freelance]
     API --> GMAIL[Gmail API<br/>alerts, send, replies]
     API --> AI[Workers AI<br/>grounded resume wording]
     API --> QUEUE[Cloudflare Queue<br/>durable scan tasks]
     API -. fallback .-> GEMINI[Gemini<br/>optional fallback]
-    CRON[Cloudflare Cron<br/>every 10 minutes] --> API
+    CRON[Cloudflare Cron<br/>every 5 minutes] --> API
 ```
 
 | Service | Role | Cost model |
@@ -91,16 +93,16 @@ flowchart TB
 | Workers AI | Primary grounded resume wording and audit workflow | Cloudflare free allocation limits |
 | Gemini | Optional fallback when configured | Optional provider quota/limits |
 
-The cloud scan runs every **10 minutes**, even when your laptop is off. It checks configured public ATS boards, imports supported job-alert emails, deduplicates jobs, applies your rules, and records high-fit roles for review. It cannot promise instant discovery of every job on the internet; speed depends on the monitored sources and alert delivery.
+The cloud scan runs every **5 minutes** (`wrangler.toml:34` `*/5 * * * *` + Queue `applypilot-tasks`), even when your laptop is off. It checks configured public ATS boards, **freelance/contract boards**, imports supported job-alert emails, deduplicates jobs, applies your **Hyderabad / Bangalore / Remote India** rules, and records high-fit roles for review. Internship and freelance use a broad gate (`40%+` in configured location, no `minimum_salary` gate) so you can prioritize budget/transferable skills.
 
-## Supported sources
+## Supported sources (Hyd/Blr scope)
 
-| Direct JD discovery | Official alert and handoff sources |
-| --- | --- |
-| Greenhouse, Lever | LinkedIn job alerts |
-| Ashby, SmartRecruiters | Naukri job alerts |
-| Workable, Recruitee | Indeed job alerts |
-| Official career-page JSON-LD | Company and ATS alert emails |
+| Direct JD discovery | Freelance / Contract | Official alert and handoff sources |
+| --- | --- | --- |
+| Greenhouse, Lever | Freelance boards (contract/hourly/gig/project-based filtered from ATS + `freelance_titles`) | LinkedIn job alerts |
+| Ashby, SmartRecruiters | Upwork/Contra-style titles via same ATS (searchable via `freelance` opportunity_type) | Naukri job alerts |
+| Workable, Recruitee | Budget shown instead of CTC | Indeed job alerts |
+| Official career-page JSON-LD | Hourly / project-based | Company and ATS alert emails |
 
 Direct ATS roles include a full job description and can be scored accurately. Portal alert cards are official links, not presumed full JD matches; they require JD review before tailored resume creation.
 
@@ -159,10 +161,11 @@ Detailed deployment, operating, and security instructions are available here:
 ## Repository map
 
 ```text
-app.js / styles.css / index.html  PWA source
-public/                           Cloudflare Pages deployment output
-worker/                           API, discovery, matching, Gmail, AI services
-migrations/                       Cloudflare D1 schema history
+app.js / styles.css / index.html  PWA source (v52, Hyd/Blr + Freelance)
+public/                           Cloudflare Pages deployment output (synced in CI)
+worker/                           API, discovery (full_time/internship/freelance), matching, Gmail, AI services
+migrations/                       Cloudflare D1 schema history (0019_freelance.sql adds freelance_titles)
+opencode.json                     Auto-routing: build->nemotron-3-ultra, plan->muse-spark-1.2, explore->mimo
 test/                             Discovery, matching, outreach, Gmail and tailoring tests
 docs/                             Operating and security documentation
 resume-tailor/                    Standalone tailoring prototype/reference

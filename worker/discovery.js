@@ -211,19 +211,20 @@ export async function scanSources(env) {
           }
         }
         const internship = isEarlyCareerJob(job);
-        const internshipSettings = internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
-        const match = scoreJob(job, internshipSettings);
+        const freelance = isFreelanceJob(job);
+        const effectiveSettings = freelance ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.freelance_titles || ""}`, minimum_salary: null } : internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
+        const match = scoreJob(job, effectiveSettings);
         if (settings.feedback_learning_enabled) {
           const learned = feedbackAdjustment(job, preferenceWeights);
           match.score = Math.max(0, Math.min(100, match.score + learned.adjustment));
-          match.eligible = match.score >= Number(internshipSettings.minimum_match_score || 55);
+          match.eligible = match.score >= Number(effectiveSettings.minimum_match_score || 55);
           if (learned.adjustment) match.reasons.push(`Learned preference ${learned.adjustment > 0 ? "+" : ""}${learned.adjustment}`);
         }
         const id = `${job.provider}:${job.externalId}`;
-        // Internship hunting is intentionally broader: retain lower-fit roles in the
+        // Internship/Freelance hunting is intentionally broader: retain lower-fit roles in the
         // configured location so the user can prioritize pay and transferable skills.
-        const internshipEligible = internship && !match.reasons.includes("Location conflicts with the no-relocation preference");
-        if (!match.eligible && !internshipEligible) {
+        const broadEligible = (internship || freelance) && !match.reasons.includes("Location conflicts with the no-relocation preference");
+        if (!match.eligible && !broadEligible) {
           await env.DB.prepare("UPDATE jobs SET status = 'skipped' WHERE id = ? AND status IN ('new','shortlisted')").bind(id).run();
           const reason = match.reasons[0] || "";
           if (reason.includes("Location conflicts")) skipped.location += 1;
@@ -233,10 +234,11 @@ export async function scanSources(env) {
           else skipped.lowFit += 1;
           continue;
         }
+        const opportunityType = freelance ? "freelance" : internship ? "internship" : "full_time";
         const result = await env.DB.prepare(`INSERT OR IGNORE INTO jobs
           (id, external_id, source_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, published_at, score, score_reasons, risk_flags, duplicate_key, opportunity_type)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .bind(id, job.externalId, source.source_table === "sources" ? source.id : null, job.provider, job.company, job.title, job.location, job.workplaceType, job.description.slice(0, 30000), job.applyUrl, job.salaryText, job.publishedAt, match.score, JSON.stringify(match.reasons), JSON.stringify(jobRiskFlags(job)), duplicateKey(job), internship ? "internship" : "full_time").run();
+          .bind(id, job.externalId, source.source_table === "sources" ? source.id : null, job.provider, job.company, job.title, job.location, job.workplaceType, job.description.slice(0, 30000), job.applyUrl, job.salaryText, job.publishedAt, match.score, JSON.stringify(match.reasons), JSON.stringify(jobRiskFlags(job)), duplicateKey(job), opportunityType).run();
         discovered += result.meta.changes || 0;
         if (result.meta.changes) {
           sourceMatches += 1;
@@ -286,4 +288,8 @@ export async function scanSources(env) {
 
 function isEarlyCareerJob(job) {
   return /\b(?:intern(?:ship)?|new[ -]?grad|graduate|early[ -]?career|trainee|apprentice|fresher)\b/i.test(`${job.title} ${job.description}`);
+}
+
+function isFreelanceJob(job) {
+  return /\b(?:freelance|contract(?:or)?|gig|part[ -]?time|hourly|per[ -]?hour|project[ -]?based|upwork|fiverr|toptal|contra)\b/i.test(`${job.title} ${job.description}`);
 }

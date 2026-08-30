@@ -44,6 +44,7 @@ const seedState = {
 const navItems = [
   { id: "inbox", label: "Inbox", glyph: "A" },
   { id: "internships", label: "Early career", glyph: "I" },
+  { id: "freelance", label: "Freelance", glyph: "F" },
   { id: "today", label: "Review", glyph: "R" },
   { id: "pipeline", label: "Pipeline", glyph: "P" },
   { id: "outreach", label: "Outreach", glyph: "O" },
@@ -145,6 +146,7 @@ function mapRemote(data) {
       ,tailoringMinimumScore: data.settings.tailoring_minimum_score || 75
       ,mustHaveSkills: data.settings.must_have_skills || ""
       ,internshipTitles: data.settings.internship_titles || "Data Analyst Intern,Business Intelligence Intern,Data Engineering Intern,Analytics Intern"
+      ,freelanceTitles: data.settings.freelance_titles || "Freelance Data Analyst,Contract Analyst,Hourly Consultant,Gig Data Analyst"
       ,experienceToleranceYears: data.settings.experience_tolerance_years ?? 2
       ,searchPaused: Boolean(data.settings.search_paused)
       ,aiDailyBudget: data.settings.ai_daily_budget || 4
@@ -196,6 +198,7 @@ function counts() {
     inbox: state.jobs.filter(isReviewMatch).length + state.outreach.filter(item => ["draft", "approved"].includes(item.status)).length,
     today: state.jobs.filter(isReviewMatch).length,
     internships: state.jobs.filter(job => job.status === "new" && job.opportunityType === "internship").length,
+    freelance: state.jobs.filter(job => job.status === "new" && job.opportunityType === "freelance").length,
     pipeline: state.applications.filter(item => item.stage !== "closed").length,
     outreach: state.outreach.filter(item => item.status !== "sent").length,
     interviews: state.interviews?.length || 0,
@@ -206,7 +209,7 @@ function counts() {
 
 function isReviewMatch(job) {
   const minimumScore = Number(state.settings.minimumMatchScore || 50);
-  return job.status === "new" && job.opportunityType !== "internship" && Number(job.score || 0) >= minimumScore;
+  return job.status === "new" && !["internship", "freelance"].includes(job.opportunityType) && Number(job.score || 0) >= minimumScore;
 }
 
 function renderNav(activeView) {
@@ -218,12 +221,12 @@ function renderNav(activeView) {
       <span class="nav-count">${totals[item.id]}</span>
     </button>`;
   document.querySelector(".desktop-nav").innerHTML = navItems.map(button).join("");
-  const mobileIds = new Set(["inbox", "today", "internships", "pipeline", "outreach", "settings"]);
+  const mobileIds = new Set(["inbox", "today", "internships", "freelance", "pipeline", "outreach", "settings"]);
   document.querySelector(".mobile-nav").innerHTML = navItems.filter(item => mobileIds.has(item.id)).map(button).join("");
 }
 
 function render() {
-  const titles = { inbox: "Opportunity inbox", today: "Review jobs", internships: "Early Career & Internships", pipeline: "Application pipeline", outreach: "Recruiter outreach", interviews: "Interview cockpit", health: "System health", settings: "Preferences" };
+  const titles = { inbox: "Opportunity inbox", today: "Review jobs", internships: "Early Career & Internships", freelance: "Freelance & Contracts", pipeline: "Application pipeline", outreach: "Recruiter outreach", interviews: "Interview cockpit", health: "System health", settings: "Preferences" };
   const activeView = titles[state.activeView] ? state.activeView : "inbox";
   document.querySelector("#page-title").textContent = titles[activeView];
   const initials = state.profile.fullName.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase();
@@ -237,12 +240,13 @@ function render() {
   scanToggle.textContent = paused ? "Resume scans" : "Pause scans";
   scanToggle.classList.toggle("danger-button", !paused);
   agentStatus.textContent = paused ? "Scans paused" : "10-min scan active";
-  action.textContent = ["inbox", "today", "internships"].includes(activeView) ? "Run job scan" : activeView === "settings" ? "Save changes" : activeView === "health" ? "Run checks" : "Add item";
+  action.textContent = ["inbox", "today", "internships", "freelance"].includes(activeView) ? "Run job scan" : activeView === "settings" ? "Save changes" : activeView === "health" ? "Run checks" : "Add item";
   renderNav(activeView);
   const viewRenderers = {
     inbox: renderInbox,
     today: renderToday,
     internships: renderInternships,
+    freelance: renderFreelance,
     pipeline: renderPipeline,
     outreach: renderOutreach,
     interviews: renderInterviews,
@@ -291,7 +295,7 @@ function renderInterviews() {
 
 function renderToday() {
   const available = state.jobs.filter(isReviewMatch);
-  const saved = state.jobs.filter(job => job.status === "shortlisted" && job.opportunityType !== "internship");
+  const saved = state.jobs.filter(job => job.status === "shortlisted" && !["internship", "freelance"].includes(job.opportunityType));
   const reviewFilter = state.reviewFilter || "matches";
   const visible = reviewFilter === "saved" ? saved : reviewFilter === "strong" ? available.filter(job => job.score >= 75) : reviewFilter === "auto" ? available.filter(job => job.automationDecision === "auto_submit") : reviewFilter === "input" ? available.filter(job => job.automationDecision === "needs_input") : reviewFilter === "approval" ? available.filter(job => ["approval", "unclassified"].includes(job.automationDecision)) : available;
   const reviewTotal = available.length;
@@ -370,6 +374,24 @@ function renderInternships() {
   app.innerHTML = `<section class="focus-strip"><div class="focus-copy"><span>Official early-career roles</span><h2>${internships.length ? `${internships.length} early-career opportunit${internships.length === 1 ? "y" : "ies"}` : prepared.length ? "Your early-career application is ready" : "No early-career opportunities yet"}</h2><p>This is intentionally broader: internships, graduate, trainee, apprentice, and fresher roles from official boards. Pay and transferable skills are shown before you spend time applying.</p></div></section><section class="summary-grid"><article class="metric"><span>Open early-career roles</span><strong>${internships.length}</strong><small>Official postings only</small></article><article class="metric"><span>Prepared applications</span><strong>${prepared.length}</strong><small>Kept here for tracking</small></article><article class="metric"><span>Search approach</span><strong>Broad</strong><small>Includes transferable roles</small></article><article class="metric"><span>Freshness window</span><strong>${state.settings.freshnessHours || 72}h</strong><small>Older postings are hidden</small></article></section><div class="section-heading"><div><h2>Early Career & Internships</h2><p>Automatically scored official postings with pay, skills, timing, and a short summary.</p></div><button class="text-button" data-action="scan">Refresh sources</button></div><div class="internship-list">${internships.length ? internships.map(internshipCard).join("") : `<div class="empty-state"><h2>No current early-career match</h2><p>The last official-board scan did not return an internship, graduate, trainee, apprentice, or fresher role that fits the India-wide search. Refreshing checks the boards again.</p><button class="primary-button" data-action="scan">Run job scan</button></div>`}</div>${preparedMarkup}`;
 }
 
+function renderFreelance() {
+  const freelanceJobs = state.jobs.filter(job => job.status === "new" && job.opportunityType === "freelance");
+  const prepared = state.applications.filter(item => item.opportunityType === "freelance" && !["closed", "rejected"].includes(item.rawStage));
+  const preparedMarkup = prepared.length ? `<section class="section-stack"><div class="section-heading"><div><h2>Your freelance applications</h2><p>Prepared gigs stay visible here until they are closed.</p></div></div><div class="internship-list">${prepared.map(item => `<article class="internship-card prepared-internship"><div class="internship-head"><div><span class="lead-provider">${escapeHtml(item.stage).toUpperCase()}</span><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.company)}</p></div><strong>${item.tailoredScore || item.score || 0}% fit</strong></div><div class="internship-facts"><span><small>Stage</small>${escapeHtml(item.stage === "approved" ? "Ready to apply" : item.stage)}</span><span><small>Resume</small>${item.tailoredResumeId ? "Tailored pack saved" : "Not created"}</span><span><small>Updated</small>${escapeHtml(item.updated || "Recently")}</span></div><div class="internship-actions"><button class="secondary-button" data-action="review-pack" data-id="${escapeHtml(item.id)}">Review resume pack</button><button class="secondary-button" data-action="open-application" data-url="${escapeHtml(item.applyUrl || "")}">Open application</button></div></article>`).join("")}</div></section>` : "";
+  app.innerHTML = `<section class="focus-strip"><div class="focus-copy"><span>Freelance & contract gigs</span><h2>${freelanceJobs.length ? `${freelanceJobs.length} freelance opportunit${freelanceJobs.length === 1 ? "y" : "ies"}` : prepared.length ? "Your freelance application is ready" : "No freelance gigs yet"}</h2><p>Contract, freelance, hourly and project-based roles from official boards. Hyd / Bangalore / Remote India only. Budget and transferable skills shown.</p></div></section><section class="summary-grid"><article class="metric"><span>Open freelance gigs</span><strong>${freelanceJobs.length}</strong><small>Official postings only</small></article><article class="metric"><span>Prepared applications</span><strong>${prepared.length}</strong><small>Kept for tracking</small></article><article class="metric"><span>Search approach</span><strong>Broad</strong><small>Includes contract/hourly roles</small></article><article class="metric"><span>Freshness window</span><strong>${state.settings.freshnessHours || 72}h</strong><small>Older gigs hidden</small></article></section><div class="section-heading"><div><h2>Freelance & Contracts</h2><p>Automatically scored freelance/contract postings with budget, skills, timing and summary.</p></div><button class="text-button" data-action="scan">Refresh sources</button></div><div class="internship-list">${freelanceJobs.length ? freelanceJobs.map(freelanceCard).join("") : `<div class="empty-state"><h2>No current freelance match</h2><p>Last scan found no freelance, contract, hourly or project-based role for Hyd/Bangalore. Add a freelance source (e.g., contract board) or refresh.</p><button class="primary-button" data-action="scan">Run job scan</button></div>`}</div>${preparedMarkup}`;
+}
+
+function freelanceCard(job) {
+  const skillPool = String(state.settings.requiredSkills || "").split(",").map(skill => skill.trim()).filter(Boolean);
+  const skills = skillPool.filter(skill => String(job.description || "").toLowerCase().includes(skill.toLowerCase())).slice(0, 4);
+  const timing = job.age ? new Intl.DateTimeFormat("en", { day: "numeric", month: "short" }).format(new Date(job.age)) : "Posting date not listed";
+  const budget = job.salary && job.salary !== "Salary not listed" ? job.salary : "Budget not listed";
+  const sentence = String(job.description || "").replace(/\s+/g, " ").split(/(?<=[.!?])\s/)[0] || "Freelance/contract posting. Open details to check requirements.";
+  const eligibleForPack = job.score >= Number(state.settings.tailoringMinimumScore || 50);
+  const summary = `${sentence.slice(0, 260)} ${skills.length ? `Relevant skills: ${skills.join(", ")}.` : "Shown as transferable-skills option."}`;
+  return `<article class="internship-card"><div class="internship-head"><div><span class="lead-provider">${escapeHtml(job.source)} | FREELANCE</span><h3>${escapeHtml(job.title)}</h3><p>${escapeHtml(job.company)} | ${escapeHtml(job.location)}</p></div><strong>${job.score}% fit</strong></div><div class="internship-facts"><span><small>Budget</small>${escapeHtml(budget)}</span><span><small>Posted</small>${escapeHtml(timing)}</span><span><small>Relevant skills</small>${escapeHtml(skills.join(", ") || "Transferable")}</span></div><div class="internship-actions"><button class="secondary-button" data-action="toggle-intern-summary" data-id="${escapeHtml(job.id)}">What this gig is</button><button class="secondary-button" data-action="details" data-id="${escapeHtml(job.id)}">Review JD</button>${eligibleForPack ? `<button class="primary-button" data-action="approve" data-id="${escapeHtml(job.id)}">Prepare resume</button>` : `<button class="secondary-button" data-action="details" data-id="${escapeHtml(job.id)}">Below resume gate</button>`}</div><p class="internship-summary" id="intern-summary-${escapeHtml(job.id)}" hidden>${escapeHtml(summary)}</p></article>`;
+}
+
 function internshipCard(job) {
   const skillPool = String(state.settings.requiredSkills || "").split(",").map(skill => skill.trim()).filter(Boolean);
   const skills = skillPool.filter(skill => String(job.description || "").toLowerCase().includes(skill.toLowerCase())).slice(0, 4);
@@ -429,6 +451,7 @@ function renderSettings() {
       <div class="field"><label for="role">Primary target designation</label><input id="role" value="${escapeHtml(s.role)}"><small>Your highest-priority role for matching.</small></div>
       <div class="field"><label for="alternate-titles">Additional target designations</label><textarea id="alternate-titles" rows="4" placeholder="Business Intelligence Analyst, Analytics Engineer, Junior Data Engineer">${escapeHtml(s.alternateTitles || "")}</textarea><small>Enter multiple roles separated by commas. Every role is included in job matching.</small></div>
       <div class="field"><label for="internship-titles">Internship designations</label><textarea id="internship-titles" rows="3" placeholder="Data Analyst Intern, Business Intelligence Intern">${escapeHtml(s.internshipTitles || "Data Analyst Intern,Business Intelligence Intern,Data Engineering Intern,Analytics Intern")}</textarea><small>These appear in the separate Internships section.</small></div>
+      <div class="field"><label for="freelance-titles">Freelance designations</label><textarea id="freelance-titles" rows="3" placeholder="Freelance Data Analyst, Contract BI Analyst, Hourly SQL Consultant">${escapeHtml(s.freelanceTitles || "Freelance Data Analyst,Contract Analyst,Hourly Consultant,Gig Data Analyst")}</textarea><small>These appear in the Freelance section. Hyd/Bangalore/Remote India only.</small></div>
       <div class="field"><label for="location">Preferred location</label><input id="location" value="${s.location}"></div>
       <div class="field"><label for="skills">Required skills</label><input id="skills" value="${s.requiredSkills || "JavaScript,TypeScript,React,Node.js"}"></div>
       <div class="field"><label for="minimum-salary">Minimum CTC (LPA)</label><input id="minimum-salary" type="number" min="1" step="0.5" value="${(s.minimumSalary || 700000) / 100000}"><small>Target: ₹8-10 LPA · Stretch: ₹10-12 LPA</small></div>
