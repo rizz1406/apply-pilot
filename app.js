@@ -289,6 +289,11 @@ async function connectBackend(quiet = true) {
     if (!quiet) toast("Connected to the cloud backend.");
   } catch (error) {
     remoteEnabled = false;
+    // Don't double-toast for auth — dialog is already opening
+    if (String(error.message).includes("Unauthorized")) {
+      // ensureAuth already opened the connect dialog; stay quiet
+      return;
+    }
     toast(`Cloud data could not load: ${error.message}`, { title: "Connection problem", tone: "error", duration: 6000 });
   }
 }
