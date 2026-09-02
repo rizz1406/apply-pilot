@@ -303,5 +303,12 @@ function isEarlyCareerJob(job) {
 }
 
 function isFreelanceJob(job) {
-  return /\b(?:freelance|contract(?:or)?|gig|part[ -]?time|hourly|per[ -]?hour|project[ -]?based|upwork|fiverr|toptal|contra)\b/i.test(`${job.title} ${job.description}`);
+  const title = String(job.title || "").toLowerCase();
+  const desc = String(job.description || "").toLowerCase();
+  // Title is strongest signal — if title says freelance/contract/gig/hourly, it's freelance
+  if (/\b(?:freelance|contract(?:or)?|gig|hourly|project[ -]?based|upwork|fiverr|toptal|contra)\b/i.test(title)) return true;
+  // Description alone needs stronger freelance proof and must not be a senior full-time role
+  const strongDesc = /\b(?:freelance\b|upwork|fiverr|toptal|\bcontract\b.*\b(?:hourly|project|gig)\b|hourly\s*rate|per\s*hour|\$\s*\d+\s*\/\s*hour)\b/i.test(desc);
+  if (strongDesc && !/\b(?:senior|lead|principal|staff|forward deployed)\b/i.test(title)) return true;
+  return false;
 }
