@@ -6,16 +6,16 @@ let remoteEnabled = false;
 
 function getApiToken() {
   const token = localStorage.getItem(API_TOKEN_KEY);
-  const expiry = localStorage.getItem(API_TOKEN_EXPIRY_KEY);
   if (!token) return null;
-  if (expiry && Date.now() > Number(expiry)) {
-    localStorage.removeItem(API_TOKEN_KEY);
-    localStorage.removeItem(API_TOKEN_EXPIRY_KEY);
-    return null;
+  // Auto-extend expiry on each read for personal use — never log you out
+  const expiry = localStorage.getItem(API_TOKEN_EXPIRY_KEY);
+  if (expiry && Date.now() > Number(expiry) - 86400000) {
+    // within 1 day of expiry → extend 365 days automatically
+    localStorage.setItem(API_TOKEN_EXPIRY_KEY, String(Date.now() + 365 * 86400000));
   }
   try { return atob(token); } catch { return token; }
 }
-function setApiToken(value, ttlDays = 30) {
+function setApiToken(value, ttlDays = 365) {
   if (!value) {
     localStorage.removeItem(API_TOKEN_KEY);
     localStorage.removeItem(API_TOKEN_EXPIRY_KEY);
@@ -28,6 +28,34 @@ function isTokenExpiringSoon(days = 3) {
   const expiry = Number(localStorage.getItem(API_TOKEN_EXPIRY_KEY) || 0);
   if (!expiry) return false;
   return expiry - Date.now() < days * 86400000;
+}
+// Personal use: allow #token= or ?token= in URL to auto-save without typing
+try {
+  const hashToken = new URLSearchParams(location.hash.slice(1)).get("token") || new URLSearchParams(location.search).get("token");
+  if (hashToken) { setApiToken(hashToken, 365); history.replaceState({}, "", location.pathname + location.search.replace(/[\?&]token=[^&]+/, "").replace(/^\?$/, "") + location.hash.replace(/token=[^&]+/, "")); }
+} catch {}
+let authPromptShown = false;
+function ensureAuth() {
+  if (authPromptShown) return;
+  if (getApiToken()) return;
+  authPromptShown = true;
+  const existing = document.querySelector("#detail-dialog");
+  // Show one-time setup dialog instead of double toast
+  if (existing) {
+    existing.className = "";
+    existing.innerHTML = `<div class="dialog-content"><div class="dialog-header"><div><h2>Connect your cloud</h2><p class="job-company">Paste your private API token once — stays saved for a year, auto-renews.</p></div><button class="dialog-close" aria-label="Close">×</button></div><div class="field"><label for="auth-token-input">Private API token</label><input id="auth-token-input" type="password" placeholder="Paste ADMIN_TOKEN"></div><div class="dialog-actions"><button class="secondary-button dialog-close">Later</button><button class="primary-button" id="auth-save">Save & connect</button></div></div>`;
+    existing.showModal();
+    existing.querySelector(".dialog-close").onclick = () => existing.close();
+    existing.querySelector("#auth-save").onclick = async () => {
+      const v = existing.querySelector("#auth-token-input").value.trim();
+      if (!v) return;
+      setApiToken(v, 365);
+      existing.close();
+      authPromptShown = false;
+      await connectBackend(false);
+      toast("Connected — token saved for a year.");
+    };
+  }
 }
 const SOURCE_PRESETS = [
   { provider: "ashby", organization: "sarvam", label: "Sarvam" },
@@ -105,8 +133,13 @@ async function api(path, options = {}) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      if (response.status === 401 && token) {
-        toast("Session expired. Please re-enter your API token in Settings.", { title: "Authentication", tone: "error", duration: 5000 });
+      if (response.status === 401) {
+        if (!authPromptShown) {
+          authPromptShown = true;
+          // De-duplicate: only one auth UI, not two toasts
+          setTimeout(() => ensureAuth(), 300);
+        }
+        throw new Error("Unauthorized — token missing or expired. Opening connect dialog.");
       }
       if (response.status === 429) {
         throw new Error(data.error || "Too many requests. Wait a moment and retry.");
@@ -116,6 +149,8 @@ async function api(path, options = {}) {
     return data;
   } catch (error) {
     if (error.name === "AbortError") throw new Error("Request timed out. Check your connection.");
+    // Suppress double connection toast when auth dialog is open
+    if (String(error.message).includes("Unauthorized") && authPromptShown) throw error;
     throw error;
   } finally {
     clearTimeout(timeout);

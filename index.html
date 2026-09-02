@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="styles.css?v=56">
   <title>ApplyPilot — Command Center</title>
-  <script>try{const t=localStorage.getItem("applypilot-theme"); if(t) document.documentElement.setAttribute("data-theme",t); else if(window.matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.setAttribute("data-theme","dark"); }catch{}</script>
+  <script>try{const t=localStorage.getItem("applypilot-theme"); if(t) document.documentElement.setAttribute("data-theme",t); else document.documentElement.setAttribute("data-theme","dark"); localStorage.setItem("applypilot-theme","dark"); }catch{}</script>
 </head>
 <body>
   <div class="offline-banner" id="offline-banner" hidden>Offline mode: showing your last synced data.</div>
