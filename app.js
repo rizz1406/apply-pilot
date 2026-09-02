@@ -592,6 +592,14 @@ function renderSettings() {
     </section>
     <section class="panel settings-section" style="grid-column:1/-1"><h2>Resume variants</h2><div class="job-list">${(state.resumeVariants || []).map(variant => `<div class="toggle-row"><span><strong>${escapeHtml(variant.name)}</strong><small>${escapeHtml(variant.target_titles)}</small></span><span class="badge">${escapeHtml(variant.filename)}</span></div>`).join("") || `<p class="job-company">No variants configured.</p>`}</div></section>
     <section class="panel settings-section" style="grid-column:1/-1"><h2>Application answer library</h2><p class="job-company">Save verified answers for protected application forms. Copy them into official portals; ApplyPilot does not auto-submit forms.</p><div class="settings-grid">${[{ key: "notice_period", label: "Notice period" }, { key: "expected_ctc", label: "Expected CTC" }, { key: "work_authorization", label: "Work authorization" }, { key: "linkedin", label: "LinkedIn URL" }, { key: "portfolio", label: "Portfolio URL" }].map(field => { const answer = (state.answers || []).find(item => item.key === field.key) || {}; return `<div class="field"><label for="answer-${field.key}">${field.label}</label><input id="answer-${field.key}" value="${escapeHtml(answer.value || "")}" placeholder="Add your verified answer"></div>`; }).join("")}</div><button class="secondary-button" data-action="save-answers">Save answer library</button></section>
+    <section class="panel settings-section" style="grid-column:1/-1"><div class="section-heading"><div><h2>Upload your current resume</h2><p>One-stop: upload PDF and we search jobs around it + pre-fill evidence.</p></div></div>
+      <div class="panel" id="resume-drop" style="border:2px dashed var(--line-strong); border-radius:14px; background: var(--surface-alt); padding:18px; text-align:center; transition: all .16s;">
+        <input id="resume-file" type="file" accept=".pdf,.txt,.tex,.json" hidden>
+        <p style="margin:0; font-weight:700;">Drop your resume PDF here or <button class="text-button" data-action="pick-resume" style="font-weight:800;">choose file</button></p><p class="job-company" style="margin:6px 0 0;">PDF, TXT, LaTeX or JSON • stays in your D1 • used to set skills & search</p>
+        <div id="resume-parse-status" class="job-company" style="margin-top:10px;"></div>
+        <div id="resume-preview" style="margin-top:12px; text-align:left; display:none;"><textarea id="resume-text-preview" rows="6" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:10px; font-family: monospace; font-size:11px;"></textarea><div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;"><button class="primary-button" data-action="confirm-resume-parse">Use this to set my search & evidence</button><button class="text-button" data-action="clear-resume-parse">Clear</button><label class="check-row" style="margin:0;"><input id="keep-latex" type="checkbox" checked> Keep LaTeX too (advanced)</label></div></div>
+      </div>
+    </section>
     <section class="panel settings-section" style="grid-column:1/-1"><div class="section-heading"><div><h2>Verified resume evidence</h2><p>Only confirmed evidence can be added to AI-generated resumes.</p></div></div>
       <div class="evidence-form"><div class="field"><label for="evidence-type">Type</label><select id="evidence-type"><option value="project">Project</option><option value="experience">Experience</option><option value="certification">Certification</option><option value="skill">Skill</option><option value="achievement">Achievement bullet</option></select></div><div class="field"><label for="evidence-title">Title</label><input id="evidence-title" placeholder="Project, certification, role, or skill"></div><div class="field"><label for="evidence-context">Company, technology, or target entry</label><input id="evidence-context" placeholder="Example: DataBeat or SQL, Power BI"></div><div class="field"><label for="evidence-dates">Dates</label><input id="evidence-dates" placeholder="Example: Aug 2026"></div><div class="field evidence-wide"><label for="evidence-bullets">Verified details</label><textarea id="evidence-bullets" rows="3" placeholder="One truthful bullet per line"></textarea></div><div class="field evidence-wide"><label for="evidence-source">Evidence link or source</label><input id="evidence-source" placeholder="GitHub, credential URL, or user-confirmed"></div></div>
       <label class="check-row"><input id="evidence-confirmed" type="checkbox"> I confirm this information is accurate and can appear on my resume</label><button class="secondary-button" data-action="add-evidence">Add verified evidence</button>
@@ -615,6 +623,20 @@ function bindViewEvents() {
   if (fontSel) fontSel.addEventListener("change", e => { state.settings.fontScale = e.target.value; saveState(); render(); toast(`Text size: ${e.target.value}`); });
   const filterSel = document.getElementById ? document.getElementById("saved-filter") : null;
   if (filterSel) filterSel.addEventListener("change", e => { state.settings.savedFilter = e.target.value; saveState(); render(); toast(`Default filter: ${e.target.value}`); });
+  // Resume upload: drag-drop + file pick — becomes master for search
+  const drop = document.getElementById ? document.getElementById("resume-drop") : null;
+  const fileInput = document.getElementById ? document.getElementById("resume-file") : null;
+  if (drop && fileInput) {
+    const pick = () => fileInput.click();
+    drop.querySelector('[data-action="pick-resume"]')?.addEventListener("click", pick);
+    drop.addEventListener("dragover", e => { e.preventDefault(); drop.style.borderColor = "var(--green)"; drop.style.background = "var(--green-soft)"; });
+    drop.addEventListener("dragleave", () => { drop.style.borderColor = ""; drop.style.background = ""; });
+    drop.addEventListener("drop", async e => {
+      e.preventDefault(); drop.style.borderColor = ""; drop.style.background = "";
+      const f = e.dataTransfer.files[0]; if (f) await handleResumeFile(f);
+    });
+    fileInput.addEventListener("change", async e => { const f = e.target.files[0]; if (f) await handleResumeFile(f); });
+  }
 }
 
 async function handleAction(event) {
@@ -659,6 +681,9 @@ async function handleAction(event) {
   }
   if (action === "add-source") await addSource();
   if (action === "add-preset") await addPreset(event.currentTarget.dataset.preset);
+  if (action === "pick-resume") document.getElementById("resume-file")?.click();
+  if (action === "confirm-resume-parse") await confirmResumeParse();
+  if (action === "clear-resume-parse") { const el=document.getElementById("resume-preview"); if(el) el.style.display="none"; document.getElementById("resume-parse-status").textContent=""; }
   if (action === "add-bulk-career") await addBulkCareer();
   if (action === "preview-bulk-career") previewBulkCareer();
   if (action === "download-pack-pdf") await downloadPackPdf(id);
@@ -1282,6 +1307,70 @@ async function copyPackLink(id) {
   }
 }
 
+const RESUME_SKILLS = ["sql","python","bigquery","snowflake","databricks","dbt","airflow","spark","etl","gcp","aws","azure","tableau","power bi","looker","looker studio","ga4","google analytics","gam","excel","google sheets","pandas","forecasting","statistics","a/b testing","docker","git","api","data quality","dashboard","reporting","partitioning","clustering"];
+
+async function handleResumeFile(file) {
+  const status = document.getElementById("resume-parse-status");
+  const previewWrap = document.getElementById("resume-preview");
+  const preview = document.getElementById("resume-text-preview");
+  if (!status || !previewWrap || !preview) return;
+  status.textContent = `Reading ${file.name}...`;
+  try {
+    let text = "";
+    if (file.name.toLowerCase().endsWith(".pdf")) {
+      const buf = await file.arrayBuffer();
+      const pdf = await (window.pdfjsLib || window.pdfjsLib_global || self.pdfjsLib)?.getDocument({ data: buf, disableWorker: true }).promise;
+      if (!pdf) throw new Error("PDF engine not loaded. Try .txt");
+      let out = "";
+      for (let i = 1; i <= Math.min(pdf.numPages, 3); i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        out += content.items.map(it => it.str).join(" ") + "\n";
+      }
+      text = out;
+    } else {
+      text = await file.text();
+    }
+    if (!text.trim()) throw new Error("No text found in file.");
+    preview.value = text.slice(0, 8000);
+    previewWrap.style.display = "block";
+    const found = RESUME_SKILLS.filter(s => text.toLowerCase().includes(s)).slice(0, 12);
+    status.textContent = `Found ${found.length ? found.join(", ") : "no tracked skills"} — edit preview then click "Use this to set my search". This becomes your master for job search.`;
+  } catch (e) {
+    status.textContent = `Could not read: ${e.message}. Try .txt, .tex or .json.`;
+  }
+}
+
+async function confirmResumeParse() {
+  const text = document.getElementById("resume-text-preview")?.value || "";
+  if (!text.trim()) return toast("Paste resume text first.");
+  const keepLatex = document.getElementById("keep-latex")?.checked;
+  // Extract skills around uploaded resume and set search
+  const foundSkills = RESUME_SKILLS.filter(s => text.toLowerCase().includes(s));
+  const suggestedSkills = foundSkills.length ? foundSkills.join(",") : String(text.match(/[A-Za-z0-9+#.]{3,}/g)||[]).slice(0,20).join(",");
+  state.settings.requiredSkills = foundSkills.join(",") || state.settings.requiredSkills;
+  // Try to guess titles: look for "Data Analyst" etc.
+  const titleGuess = (text.match(/Data Analyst|BI Analyst|Analytics Engineer|Business Intelligence|Data Engineer|Scientist/gi)||[]).slice(0,3).join(",");
+  if (titleGuess) state.settings.alternateTitles = titleGuess;
+  saveState();
+  // Push to cloud as evidence + profile if remote
+  if (remoteEnabled) {
+    try {
+      // Save as verified evidence (one bulk)
+      await api("/evidence", { method: "POST", body: JSON.stringify({ evidenceType: "project", title: "Uploaded Master Resume", details: { name: "Master Resume", tech: foundSkills.slice(0,5).join(", "), bullets: [text.slice(0,500).replace(/\n/g," ").slice(0,400)] }, sourceUrl: "uploaded-resume", confirmed: true }) });
+      await api("/profile", { method: "PUT", body: JSON.stringify({ summary: text.slice(0,600), verified_skills: foundSkills }) });
+      await connectBackend();
+    } catch (e) { /* local only is fine */ }
+  }
+  // Toggle LaTeX visibility
+  document.documentElement.setAttribute("data-keep-latex", keepLatex ? "1" : "0");
+  try { localStorage.setItem("applypilot-keep-latex", keepLatex ? "1" : "0"); } catch {}
+  toast(`Resume set as master. Search now around: ${foundSkills.slice(0,5).join(", ")||"your profile"}. ${keepLatex ? "LaTeX kept under Advanced." : "LaTeX hidden."}`);
+  state.activeView = "today";
+  render();
+  if (remoteEnabled) { try { await api("/scan", { method: "POST" }); await connectBackend(); } catch {} }
+}
+
 async function openLead(id, url) {
   const lead = state.leads.find(item => String(item.id) === String(id));
   if (!lead) return window.open(url, "_blank", "noopener,noreferrer");
@@ -1459,6 +1548,8 @@ try {
   const savedTheme = localStorage.getItem("applypilot-theme");
   if (savedTheme) document.querySelector("#theme-toggle").textContent = savedTheme === "dark" ? "☾" : "◐";
   else if (window.matchMedia("(prefers-color-scheme: dark)").matches) document.querySelector("#theme-toggle").textContent = "☾";
+  const keepLatex = localStorage.getItem("applypilot-keep-latex");
+  document.documentElement.setAttribute("data-keep-latex", keepLatex || "1");
 } catch {}
 
 document.querySelector("#date-label").textContent = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "short", day: "numeric" }).format(new Date());

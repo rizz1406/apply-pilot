@@ -721,6 +721,8 @@ body.compact .metric { min-height: 72px; padding: 12px; }
 body.compact .metric strong { font-size: 20px; }
 body.compact .internship-card { padding: 12px; }
 body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+html[data-keep-latex="0"] #download-tex, html[data-keep-latex="0"] #download-json { display: none !important; }
+#resume-drop.dragover { border-color: var(--green) !important; background: var(--green-soft) !important; }
   .settings-grid { grid-template-columns: 1fr; }
   .health-grid { grid-template-columns: 1fr; }
   .health-row { grid-template-columns: 1fr auto; }
