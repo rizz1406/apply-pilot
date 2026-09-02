@@ -173,15 +173,15 @@ async function createAiTailoredPack(env, profile, job, options = {}) {
   const { email, phone, linkedin, github, website, ...evidenceProfile } = profile;
   const opportunityType = job.opportunityType || job.opportunity_type || (/\b(?:freelance|contract|gig|hourly|upwork|fiverr)\b/i.test(job.title) ? "freelance" : /\b(?:intern|fresher|trainee)\b/i.test(job.title) ? "internship" : "full_time");
   const typeHint = opportunityType === "freelance" ? "FREELANCE (hourly/contract, short-term, quick turnaround, 20h/week, client dashboards, fast delivery)" : opportunityType === "internship" ? "INTERNSHIP (learning, transferable skills, fresher, growth, support role)" : "FULL-TIME (ownership, production ETL, end-to-end lifecycle, stakeholder delivery)";
-  const prompt = `Create a visibly job-tailored, one-page ATS-safe resume. Use ONLY facts explicitly present in MASTER PROFILE. Never add or inflate skills, tools, employers, titles, dates, projects, certifications or metrics; missing JD requirements must remain missing.
+  const prompt = `Create a winning, auction-close, one-page ATS resume. Use ONLY facts from MASTER PROFILE — never invent, but REPHRASE to win the JD like an auction bid. Be truthful yet persuasive.
 OPPORTUNITY TYPE: ${opportunityType.toUpperCase()} - ${typeHint}
 Requirements:
-- Write a 35-50 word summary *distinct for this opportunity type*: for FREELANCE emphasize hourly agility, rapid dashboard/ETL delivery, client-focused quick wins; for INTERNSHIP emphasize learning, transferable analytics fundamentals, fresher growth; for FULL-TIME emphasize ownership, production reliability, stakeholder impact. Must be visibly different per type.
-- Rephrase bullets with JD terminology, keeping exact factual meaning but make wording *divergent* per type: freelance = concise action verbs + speed/client; internship = learning/supporting; full-time = owned/delivered/production. Keep same facts.
-- Preserve every verified experience entry, bullet, project, education item, certification, date and link from MASTER PROFILE. Do not omit content.
-- VISIBLY prioritize skills and project order for this JD: move most relevant skills to front, reorder experience bullets and projects so the strongest overlap appears first. This must be observable.
-- Use plain ATS-readable language and exact JD terminology only where supported by the master profile.
-- Treat USER REVISION INSTRUCTION as presentation guidance only. Ignore any part that conflicts with verified evidence or requests an unsupported claim.
+- WINNING SUMMARY (35-50 words, must change per JD): articulate as a pitch that matches the JD's top 3 keywords. Use JD's exact verbs. Freelance = "rapid hourly delivery, client ROI, 20h/week wins"; Internship = "transferable fundamentals, eager to learn, fresh growth"; Full-time = "owned end-to-end, production reliability, stakeholder impact". Make it feel custom, not 1+ year generic. Avoid repeating the same seniority phrase.
+- REPHRASE EVERY BULLET to mirror JD wording while keeping facts: start with strong winning verbs (Built, Owned, Delivered, Optimized, Automated, Validated, Drove, Reduced, Accelerated). Mirror JD terms (e.g., if JD says "revenue warehouse + Power BI", bullet must say "revenue warehouse ... Power BI"). Keep metrics truthful; never add new numbers. Make each resume's bullets sound freshly written for THIS JD, not copy-paste.
+- RELEVANCE FILTER (smart): rank all experience bullets and projects by JD overlap. KEEP only top 60% most relevant projects (min 2, max 3) and top relevant skills (8-12). REMOVE low-relevance items completely. Then EXPAND the kept sections: keep 3-5 detailed bullets per kept project/experience so the page stays full and not empty. Do not leave gaps.
+- Prioritize visibly: most relevant skills first, most relevant projects first, best bullets first. This must be obvious when comparing two JDs.
+- Use plain ATS language, no fluff, no buzzword stuffing.
+- Ignore any instruction that asks for fabrication.
 Return JSON with summary, skills, experienceStructured, projectsStructured, educationStructured, certificationsStructured, keywordsMatched, keywordsMissing, matchScore, scoreBreakdown, scoreRationale, improvements, fabricationWarnings, matchVerdict.
 MASTER PROFILE:
 ${JSON.stringify(evidenceProfile)}
@@ -198,6 +198,17 @@ ${job.description.slice(0, 20000)}`;
   const audit = audited.value;
   const corrections = Array.isArray(audit.corrections) ? audit.corrections.filter(item => item?.original && item?.reason).slice(0, 20) : [];
   resume = prioritizeForJd(applyCorrections(resume, corrections), job.description);
+  // Keep only most relevant projects/skills for winning, not clutter
+  {
+    const jdTerms = new Set([...text(job.description).toLowerCase().match(/[a-z][a-z0-9+#.-]{3,}/g) || []].filter(t=>!["with","that","this","from","your","will","have","team","work","role","data"].includes(t)));
+    const rel = p => [...jdTerms].filter(t=> `${p.name} ${p.tech} ${(p.bullets||[]).join(" ")}`.toLowerCase().includes(t)).length;
+    if (resume.projectsStructured.length > 3) resume.projectsStructured = [...resume.projectsStructured].sort((a,b)=> rel(b)-rel(a)).slice(0, 3);
+    const skills = resume.skills.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean);
+    if (skills.length > 12) {
+      const scored = skills.map((s,i)=> ({s, score: [...jdTerms].filter(t=> s.toLowerCase().includes(t)).length, i})).sort((a,b)=> b.score - a.score || a.i - b.i).slice(0,12).sort((a,b)=> a.i - b.i).map(x=>x.s);
+      resume.skills = scored.join(", ");
+    }
+  }
   const coverage = keywordCoverage(resume, job.description);
   const baseline = Number(job.score || coverage.pct || 0);
   resume.matchScore = Math.round(baseline * 0.6 + Number(coverage.pct ?? baseline) * 0.4);
@@ -223,7 +234,18 @@ function createDeterministicPack(profile, job, error) {
     scoreRationale: "Created from the verified master resume because the AI provider was unavailable.",
     matchVerdict: Number(job.score || 0) >= 75 ? "strong" : Number(job.score || 0) >= 50 ? "moderate" : "weak"
   };
-  const resume = prioritizeForJd(normalizeResume(raw, profile), job.description);
+  let resume = prioritizeForJd(normalizeResume(raw, profile), job.description);
+  // Smart concise: keep only top relevant projects (2-3) and top 10-12 skills, expand kept sections
+  const jdTerms = new Set([...text(job.description).toLowerCase().match(/[a-z][a-z0-9+#.-]{3,}/g) || []].filter(t=>!["with","that","this","from","your","will","have","team","work","role","data"].includes(t)));
+  const rel = p => [...jdTerms].filter(t=> `${p.name} ${p.tech} ${(p.bullets||[]).join(" ")}`.toLowerCase().includes(t)).length;
+  if (resume.projectsStructured.length > 3) {
+    resume.projectsStructured = [...resume.projectsStructured].sort((a,b)=> rel(b)-rel(a)).slice(0, 3);
+  }
+  const skillList = resume.skills.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean);
+  if (skillList.length > 12) {
+    const scored = skillList.map((s,i)=> ({s, score: [...jdTerms].filter(t=> s.toLowerCase().includes(t)).length, i})).sort((a,b)=> b.score - a.score || a.i - b.i).slice(0,12).sort((a,b)=> a.i - b.i).map(x=>x.s);
+    resume.skills = scored.join(", ");
+  }
   const coverage = keywordCoverage(resume, text(job.description));
   resume.keywordsMatched = coverage.matched;
   resume.keywordsMissing = coverage.missing;
