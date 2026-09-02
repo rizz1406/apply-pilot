@@ -235,10 +235,22 @@ export async function scanSources(env) {
           continue;
         }
         const opportunityType = freelance ? "freelance" : internship ? "internship" : "full_time";
+        const dupKey = duplicateKey(job);
+        const existingDup = await env.DB.prepare("SELECT id, score, provider FROM jobs WHERE duplicate_key = ? AND status IN ('new','shortlisted','approved') LIMIT 1").bind(dupKey).first();
+        if (existingDup && existingDup.id !== id) {
+          if (Number(existingDup.score || 0) >= match.score) {
+            skipped.lowFit += 0;
+            alreadyTracked += 1;
+            continue;
+          } else {
+            await env.DB.prepare("UPDATE jobs SET status='expired' WHERE id=?").bind(existingDup.id).run();
+            expired += 1;
+          }
+        }
         const result = await env.DB.prepare(`INSERT OR IGNORE INTO jobs
           (id, external_id, source_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, published_at, score, score_reasons, risk_flags, duplicate_key, opportunity_type)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .bind(id, job.externalId, source.source_table === "sources" ? source.id : null, job.provider, job.company, job.title, job.location, job.workplaceType, job.description.slice(0, 30000), job.applyUrl, job.salaryText, job.publishedAt, match.score, JSON.stringify(match.reasons), JSON.stringify(jobRiskFlags(job)), duplicateKey(job), opportunityType).run();
+          .bind(id, job.externalId, source.source_table === "sources" ? source.id : null, job.provider, job.company, job.title, job.location, job.workplaceType, job.description.slice(0, 30000), job.applyUrl, job.salaryText, job.publishedAt, match.score, JSON.stringify(match.reasons), JSON.stringify(jobRiskFlags(job)), dupKey, opportunityType).run();
         discovered += result.meta.changes || 0;
         if (result.meta.changes) {
           sourceMatches += 1;

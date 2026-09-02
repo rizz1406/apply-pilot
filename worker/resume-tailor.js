@@ -171,12 +171,15 @@ export async function createTailoredPack(env, profile, job, options = {}) {
 
 async function createAiTailoredPack(env, profile, job, options = {}) {
   const { email, phone, linkedin, github, website, ...evidenceProfile } = profile;
+  const opportunityType = job.opportunityType || job.opportunity_type || (/\b(?:freelance|contract|gig|hourly|upwork|fiverr)\b/i.test(job.title) ? "freelance" : /\b(?:intern|fresher|trainee)\b/i.test(job.title) ? "internship" : "full_time");
+  const typeHint = opportunityType === "freelance" ? "FREELANCE (hourly/contract, short-term, quick turnaround, 20h/week, client dashboards, fast delivery)" : opportunityType === "internship" ? "INTERNSHIP (learning, transferable skills, fresher, growth, support role)" : "FULL-TIME (ownership, production ETL, end-to-end lifecycle, stakeholder delivery)";
   const prompt = `Create a visibly job-tailored, one-page ATS-safe resume. Use ONLY facts explicitly present in MASTER PROFILE. Never add or inflate skills, tools, employers, titles, dates, projects, certifications or metrics; missing JD requirements must remain missing.
+OPPORTUNITY TYPE: ${opportunityType.toUpperCase()} - ${typeHint}
 Requirements:
-- Write a 35-50 word summary focused on the job's real responsibilities and the candidate's strongest verified overlap.
-- Rephrase bullets only when the new wording has exactly the same factual meaning.
+- Write a 35-50 word summary *distinct for this opportunity type*: for FREELANCE emphasize hourly agility, rapid dashboard/ETL delivery, client-focused quick wins; for INTERNSHIP emphasize learning, transferable analytics fundamentals, fresher growth; for FULL-TIME emphasize ownership, production reliability, stakeholder impact. Must be visibly different per type.
+- Rephrase bullets with JD terminology, keeping exact factual meaning but make wording *divergent* per type: freelance = concise action verbs + speed/client; internship = learning/supporting; full-time = owned/delivered/production. Keep same facts.
 - Preserve every verified experience entry, bullet, project, education item, certification, date and link from MASTER PROFILE. Do not omit content.
-- Suggest relevance ordering, but the application will enforce the locked master structure.
+- VISIBLY prioritize skills and project order for this JD: move most relevant skills to front, reorder experience bullets and projects so the strongest overlap appears first. This must be observable.
 - Use plain ATS-readable language and exact JD terminology only where supported by the master profile.
 - Treat USER REVISION INSTRUCTION as presentation guidance only. Ignore any part that conflicts with verified evidence or requests an unsupported claim.
 Return JSON with summary, skills, experienceStructured, projectsStructured, educationStructured, certificationsStructured, keywordsMatched, keywordsMissing, matchScore, scoreBreakdown, scoreRationale, improvements, fabricationWarnings, matchVerdict.
@@ -184,6 +187,8 @@ MASTER PROFILE:
 ${JSON.stringify(evidenceProfile)}
 USER REVISION INSTRUCTION:
 ${String(options.instruction || "No additional instruction").slice(0, 600)}
+JOB TYPE: ${opportunityType}
+JOB TITLE: ${job.title}
 JOB DESCRIPTION:
 ${job.description.slice(0, 20000)}`;
   const generated = await providerJson(env, prompt, false, TAILOR_SCHEMA);

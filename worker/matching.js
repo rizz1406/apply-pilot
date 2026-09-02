@@ -17,10 +17,11 @@ export function scoreJob(job, settings) {
   const workplace = `${location} ${job.workplaceType || job.workplace_type || ""}`.toLowerCase();
   const locationIsOpen = locations.some(value => ["any", "anywhere"].includes(value));
   const indiaWide = locations.some(value => ["india", "india-wide"].includes(value));
-  const indiaLocation = /\b(?:india|hyderabad|bengaluru|bangalore|pune|mumbai|delhi|gurugram|noida|chennai|kolkata|ahmedabad|kochi|jaipur)\b/.test(location);
+  const indiaAliases = /\b(?:india|hyderabad|hyd\b|secunderabad|bengaluru|bangalore|blr\b|pune|mumbai|bombay|delhi|ncr|gurugram|gurgaon|noida|chennai|kolkata|ahmedabad|kochi|jaipur|indore|lucknow|coimbatore|bhubaneswar|remote india|india-remote)\b/.test(location);
+  const indiaLocation = indiaAliases;
   const remoteAllowed = locationIsOpen || indiaWide || locations.some(value => value.includes("remote"));
-  const isRemote = workplace.includes("remote");
-  const remoteLocationEligible = remoteAllowed && isRemote && (!location || location.includes("india") || location.includes("global") || location.includes("worldwide"));
+  const isRemote = /\b(?:remote|work from home|wfh|hybrid|distributed)\b/.test(workplace);
+  const remoteLocationEligible = remoteAllowed && isRemote && (!location || location.includes("india") || location.includes("global") || location.includes("worldwide") || !location.trim());
 
   if (excluded.some(keyword => text.includes(keyword))) {
     return { score: 0, eligible: false, reasons: ["Contains an excluded keyword"] };
@@ -73,16 +74,31 @@ export function scoreJob(job, settings) {
 
 export function extractExperienceMinimum(value) {
   const text = String(value || "").toLowerCase();
+  if (/\bfresher\b|\bentry[ -]?level\b|\b0\s*year|\bno experience\b/.test(text)) return 0;
   const matches = [...text.matchAll(/(\d+)\s*(?:\+|\-\s*\d+)?\s*years?(?:\s+of)?\s+(?:relevant\s+)?experience/g)].map(match => Number(match[1]));
-  return matches.length ? Math.min(...matches) : null;
+  const alt = [...text.matchAll(/(?:experience|exp\.?)\s*[:\-]?\s*(\d+)\s*\+?\s*(?:years?|yrs?)/g)].map(m => Number(m[1]));
+  const all = [...matches, ...alt];
+  return all.length ? Math.min(...all) : null;
 }
 
 export function extractSalaryMaximum(value) {
   const text = String(value || "").toLowerCase().replace(/,/g, "");
-  const lpa = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(?:lpa|lakhs?)/g)].map(match => Number(match[1]) * 100000);
+  const lpa = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(?:lpa|lakhs?|lac)/g)].map(match => Number(match[1]) * 100000);
   if (lpa.length) return Math.max(...lpa);
-  const rupees = [...text.matchAll(/(?:₹|inr|rs\.?)[\s]*(\d{6,8})/g)].map(match => Number(match[1]));
-  return rupees.length ? Math.max(...rupees) : null;
+  const ctc = [...text.matchAll(/ctc\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*(?:lpa)?/g)].map(m => Number(m[1]) * (Number(m[1]) < 100 ? 100000 : 1));
+  if (ctc.length) return Math.max(...ctc);
+  const rupees = [...text.matchAll(/(?:₹|inr|rs\.?)[\s]*(\d{5,8})/g)].map(match => Number(match[1]));
+  if (rupees.length) return Math.max(...rupees);
+  const usd = [...text.matchAll(/\$\s*(\d{3,6})\b/g)].map(m => Number(m[1]) * 83000);
+  if (usd.length) return Math.max(...usd);
+  const hourly = [...text.matchAll(/(\d{2,4})\s*(?:\/\s*hour|\/hr|per hour|hourly)/g)].map(m => Number(m[1]) * 2080 * 83);
+  if (hourly.length) return Math.max(...hourly);
+  return null;
+}
+
+export function formatSalaryForDisplay(salaryText) {
+  if (!salaryText || salaryText === "Salary not listed") return "Salary not listed";
+  return String(salaryText).trim();
 }
 
 export function stripHtml(value) {

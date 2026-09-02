@@ -22,14 +22,33 @@ const json = (data, status = 200, extra = {}) => new Response(JSON.stringify(dat
 
 const cors = (env, request) => {
   const requestOrigin = request?.headers.get("Origin") || "";
-  const isApplyPilotOrigin = requestOrigin === env.APP_ORIGIN || /^https:\/\/[a-z0-9-]+\.applypilot\.pages\.dev$/i.test(requestOrigin);
+  const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(requestOrigin);
+  const isApplyPilotOrigin = isLocal || requestOrigin === env.APP_ORIGIN || /^https:\/\/[a-z0-9-]+\.applypilot\.pages\.dev$/i.test(requestOrigin);
+  if (!requestOrigin) return { "Vary": "Origin" };
+  if (!isApplyPilotOrigin) return { "Vary": "Origin" };
   return {
-  "Access-Control-Allow-Origin": isApplyPilotOrigin ? requestOrigin : (env.APP_ORIGIN || "*"),
+  "Access-Control-Allow-Origin": requestOrigin,
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Credentials": "true",
   "Vary": "Origin"
   };
 };
+
+const rateLimiter = new Map();
+function checkRateLimit(request, limit = 60, windowMs = 60000) {
+  const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown";
+  const key = `${ip}:${request.url}`;
+  const now = Date.now();
+  const entry = rateLimiter.get(key);
+  if (!entry || now > entry.reset) {
+    rateLimiter.set(key, { count: 1, reset: now + windowMs });
+    return true;
+  }
+  if (entry.count >= limit) return false;
+  entry.count += 1;
+  return true;
+}
 
 function pathMatch(pathname, pattern) {
   const names = [];
@@ -102,20 +121,22 @@ async function saveProjectSelections(env, job, evidence) {
   return selected;
 }
 
-async function bootstrap(env) {
+async function bootstrap(env, options = {}) {
+  const limit = Math.min(Number(options.limit || 50), 100);
+  const offset = Number(options.offset || 0);
   const [settings, profile, jobs, applications, outreach, activities, standardSources, externalSources, leads, resumeVariants, analytics, contacts, roleAnalytics, sourceAnalytics, answers, interviews] = await Promise.all([
     env.DB.prepare("SELECT * FROM settings WHERE id = 1").first(),
     env.DB.prepare("SELECT * FROM candidate_profile WHERE id = 1").first(),
-    env.DB.prepare("SELECT * FROM jobs WHERE status IN ('new','shortlisted') ORDER BY score DESC, discovered_at DESC LIMIT 100").all(),
+    env.DB.prepare("SELECT * FROM jobs WHERE status IN ('new','shortlisted') ORDER BY score DESC, discovered_at DESC LIMIT ? OFFSET ?").bind(limit, offset).all(),
     env.DB.prepare(`SELECT a.*, j.title, j.company, j.score, j.apply_url, j.description, j.opportunity_type,
       t.resume_json AS tailored_resume_json, t.audit_json AS resume_audit_json, t.keyword_coverage, t.match_score AS tailored_match_score, t.latex_content, t.status AS tailored_status, t.model AS tailored_model
       FROM applications a JOIN jobs j ON j.id = a.job_id LEFT JOIN tailored_resumes t ON t.id = a.tailored_resume_id
-      ORDER BY a.updated_at DESC LIMIT 100`).all(),
-    env.DB.prepare(`SELECT o.*, j.title AS role, j.company FROM outreach o JOIN applications a ON a.id = o.application_id JOIN jobs j ON j.id = a.job_id ORDER BY o.updated_at DESC LIMIT 100`).all(),
+      ORDER BY a.updated_at DESC LIMIT 50`).all(),
+    env.DB.prepare(`SELECT o.*, j.title AS role, j.company FROM outreach o JOIN applications a ON a.id = o.application_id JOIN jobs j ON j.id = a.job_id ORDER BY o.updated_at DESC LIMIT 50`).all(),
     env.DB.prepare("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT 20").all(),
     env.DB.prepare("SELECT * FROM sources ORDER BY label").all(),
     env.DB.prepare("SELECT * FROM external_sources ORDER BY label").all(),
-    env.DB.prepare("SELECT * FROM job_leads WHERE status IN ('new','opened') ORDER BY discovered_at DESC LIMIT 100").all(),
+    env.DB.prepare("SELECT * FROM job_leads WHERE status IN ('new','opened') ORDER BY discovered_at DESC LIMIT 50").all(),
     env.DB.prepare("SELECT * FROM resume_variants ORDER BY is_default DESC, name").all(),
     env.DB.prepare(`SELECT
       (SELECT COUNT(*) FROM jobs) AS discovered,
@@ -177,7 +198,18 @@ async function route(request, env) {
     }, { title: "Revenue Data Analyst", company: "Example", description: "Requires SQL, BigQuery and revenue reporting experience.", score: 80 });
     return json({ ok: true, model: pack.model, summary: pack.resume.summary, coverage: pack.coverage, latexTemplate: pack.latex.startsWith("\\documentclass{resume}") });
   }
-  if (method === "GET" && path === "/api/bootstrap") return json(await bootstrap(env));
+  if (method === "GET" && path === "/api/bootstrap") {
+    const limit = Number(url.searchParams.get("limit") || 50);
+    const offset = Number(url.searchParams.get("offset") || 0);
+    return json(await bootstrap(env, { limit, offset }));
+  }
+  if (method === "GET" && path === "/api/jobs") {
+    const limit = Math.min(Number(url.searchParams.get("limit") || 20), 50);
+    const offset = Number(url.searchParams.get("offset") || 0);
+    const status = url.searchParams.get("status") || "new";
+    const { results } = await env.DB.prepare("SELECT * FROM jobs WHERE status = ? ORDER BY score DESC, discovered_at DESC LIMIT ? OFFSET ?").bind(status, limit, offset).all();
+    return json({ jobs: results, limit, offset });
+  }
 
   if (method === "POST" && path === "/api/automation/reassess") {
     const { results: jobs } = await env.DB.prepare("SELECT * FROM jobs WHERE status IN ('new','shortlisted') ORDER BY score DESC LIMIT 100").all();
@@ -721,18 +753,25 @@ async function scheduled(env, controller) {
 
 export default {
   async fetch(request, env) {
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(env, request) });
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...cors(env, request), "X-Content-Type-Options": "nosniff" } });
+    if (!checkRateLimit(request, 120, 60000)) {
+      return json({ error: "Too many requests. Please slow down." }, 429, cors(env, request));
+    }
     try {
       const response = await route(request, env);
       const headers = new Headers(response.headers);
       Object.entries(cors(env, request)).forEach(([key, value]) => headers.set(key, value));
       headers.set("X-Content-Type-Options", "nosniff");
-      headers.set("Referrer-Policy", "no-referrer");
+      headers.set("X-Frame-Options", "DENY");
+      headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
       headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
       headers.set("Cache-Control", "no-store");
+      headers.set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; connect-src 'self' https://applypilot-api.rizwanmirza95551.workers.dev http://127.0.0.1:8787; frame-ancestors 'none'");
+      headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
       return new Response(response.body, { status: response.status, headers });
     } catch (error) {
-      return json({ error: error.message || "Unexpected error" }, 500, cors(env, request));
+      const errHeaders = { ...cors(env, request), "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" };
+      return json({ error: error.message || "Unexpected error" }, 500, errHeaders);
     }
   },
   async scheduled(controller, env, ctx) {

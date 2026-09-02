@@ -1,7 +1,34 @@
 const STORAGE_KEY = "applypilot-state-v2";
 const API_TOKEN_KEY = "applypilot-api-token";
+const API_TOKEN_EXPIRY_KEY = "applypilot-api-token-expiry";
 const API_BASE = location.port === "4173" ? "http://127.0.0.1:8787/api" : "https://applypilot-api.rizwanmirza95551.workers.dev/api";
 let remoteEnabled = false;
+
+function getApiToken() {
+  const token = localStorage.getItem(API_TOKEN_KEY);
+  const expiry = localStorage.getItem(API_TOKEN_EXPIRY_KEY);
+  if (!token) return null;
+  if (expiry && Date.now() > Number(expiry)) {
+    localStorage.removeItem(API_TOKEN_KEY);
+    localStorage.removeItem(API_TOKEN_EXPIRY_KEY);
+    return null;
+  }
+  try { return atob(token); } catch { return token; }
+}
+function setApiToken(value, ttlDays = 30) {
+  if (!value) {
+    localStorage.removeItem(API_TOKEN_KEY);
+    localStorage.removeItem(API_TOKEN_EXPIRY_KEY);
+    return;
+  }
+  localStorage.setItem(API_TOKEN_KEY, btoa(value.trim()));
+  localStorage.setItem(API_TOKEN_EXPIRY_KEY, String(Date.now() + ttlDays * 86400000));
+}
+function isTokenExpiringSoon(days = 3) {
+  const expiry = Number(localStorage.getItem(API_TOKEN_EXPIRY_KEY) || 0);
+  if (!expiry) return false;
+  return expiry - Date.now() < days * 86400000;
+}
 const SOURCE_PRESETS = [
   { provider: "ashby", organization: "sarvam", label: "Sarvam" },
   { provider: "ashby", organization: "atlan", label: "Atlan" },
@@ -31,14 +58,20 @@ const seedState = {
     minimumSalary: 700000,
     approval: true,
     followups: true,
-    telegram: false
+    telegram: false,
+    aiDailyBudget: 12,
+    compactView: false,
+    reduceMotion: false,
+    fontScale: "medium",
+    savedFilter: "matches"
   },
   jobs: [],
   applications: [],
   outreach: [],
   activity: [],
   leads: [],
-  sources: []
+  sources: [],
+  jobsVisible: 20
 };
 
 const navItems = [
@@ -61,14 +94,32 @@ const pendingApprovals = new Set();
 dialog.addEventListener("close", () => { dialog.className = ""; });
 
 async function api(path, options = {}) {
-  const token = localStorage.getItem(API_TOKEN_KEY);
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers }
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `Request failed with ${response.status}`);
-  return data;
+  const token = getApiToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 401 && token) {
+        toast("Session expired. Please re-enter your API token in Settings.", { title: "Authentication", tone: "error", duration: 5000 });
+      }
+      if (response.status === 429) {
+        throw new Error(data.error || "Too many requests. Wait a moment and retry.");
+      }
+      throw new Error(data.error || `Request failed with ${response.status}`);
+    }
+    return data;
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("Request timed out. Check your connection.");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function parseJson(value, fallback) {
@@ -79,6 +130,32 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, character => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   })[character]);
+}
+
+function friendlyActivity(item) {
+  const t = String(item.text || item.message || "");
+  const time = item.time || item.created_at || "";
+  let friendly = t;
+  if (/Job scan completed/i.test(t)) {
+    const m = t.match(/(\d+) new matches/i);
+    friendly = m ? `Found ${m[1]} new matching jobs • auto-scored for you` : "Checked all company boards";
+  } else if (/0 approved follow-ups are due/i.test(t)) friendly = "Checked follow-ups — none needed";
+  else if (/Job-specific resume approved/i.test(t)) friendly = "You approved a tailored resume";
+  else if (/Resume v\d+ regenerated/i.test(t)) friendly = t.replace("Resume v", "Updated resume v").replace("with @cf/meta", "using AI");
+  else if (/AI resume packs created/i.test(t)) friendly = "AI resume usage updated";
+  let ago = time;
+  try {
+    const d = new Date(time);
+    if (!isNaN(d)) {
+      const s = Math.floor((Date.now() - d.getTime())/1000);
+      if (s < 60) ago = "just now";
+      else if (s < 3600) ago = Math.floor(s/60) + "m ago";
+      else if (s < 86400) ago = Math.floor(s/3600) + "h ago";
+      else ago = Math.floor(s/86400) + "d ago";
+    }
+  } catch {}
+  const icon = /Found|new matching/i.test(friendly) ? "✦" : /follow-ups/i.test(friendly) ? "✓" : /resume/i.test(friendly) ? "📄" : "•";
+  return { friendly, ago, icon };
 }
 
 function mapRemote(data) {
@@ -163,6 +240,7 @@ function mapRemote(data) {
 
 async function connectBackend(quiet = true) {
   try {
+    if (!state.jobs.length) showSkeleton(4);
     const previousJobs = new Set((state.jobs || []).map(job => String(job.id)));
     const data = await api("/bootstrap");
     mapRemote(data);
@@ -225,9 +303,25 @@ function renderNav(activeView) {
   document.querySelector(".mobile-nav").innerHTML = navItems.filter(item => mobileIds.has(item.id)).map(button).join("");
 }
 
+function showSkeleton(count = 3) {
+  app.innerHTML = `<div class="job-list">${Array.from({ length: count }).map(() => `<div class="skeleton-card"><div class="skeleton skeleton-line" style="width:42%"></div><div class="skeleton skeleton-line" style="width:78%"></div><div class="skeleton skeleton-line" style="width:62%"></div></div>`).join("")}</div>`;
+}
 function render() {
   const titles = { inbox: "Opportunity inbox", today: "Review jobs", internships: "Early Career & Internships", freelance: "Freelance & Contracts", pipeline: "Application pipeline", outreach: "Recruiter outreach", interviews: "Interview cockpit", health: "System health", settings: "Preferences" };
   const activeView = titles[state.activeView] ? state.activeView : "inbox";
+  if (app && app.style) {
+    app.style.opacity = "0.96";
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => { if (app && app.style) { app.style.transition = "opacity .18s var(--ease-out)"; app.style.opacity = "1"; } });
+    } else if (app.style) {
+      app.style.opacity = "1";
+    }
+  }
+  if (document.documentElement?.style) document.documentElement.style.fontSize = state.settings.fontScale === "large" ? "17px" : state.settings.fontScale === "small" ? "14px" : "15.5px";
+  if (document.body?.classList) {
+    document.body.classList.toggle("compact", !!state.settings.compactView);
+    document.body.classList.toggle("reduce-motion", !!state.settings.reduceMotion);
+  }
   document.querySelector("#page-title").textContent = titles[activeView];
   const initials = state.profile.fullName.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase();
   document.querySelector(".sidebar-profile .avatar").textContent = initials;
@@ -296,8 +390,11 @@ function renderInterviews() {
 function renderToday() {
   const available = state.jobs.filter(isReviewMatch);
   const saved = state.jobs.filter(job => job.status === "shortlisted" && !["internship", "freelance"].includes(job.opportunityType));
-  const reviewFilter = state.reviewFilter || "matches";
-  const visible = reviewFilter === "saved" ? saved : reviewFilter === "strong" ? available.filter(job => job.score >= 75) : reviewFilter === "auto" ? available.filter(job => job.automationDecision === "auto_submit") : reviewFilter === "input" ? available.filter(job => job.automationDecision === "needs_input") : reviewFilter === "approval" ? available.filter(job => ["approval", "unclassified"].includes(job.automationDecision)) : available;
+  const reviewFilter = state.reviewFilter || state.settings.savedFilter || "matches";
+  const rawVisible = reviewFilter === "saved" ? saved : reviewFilter === "strong" ? available.filter(job => job.score >= 75) : reviewFilter === "auto" ? available.filter(job => job.automationDecision === "auto_submit") : reviewFilter === "input" ? available.filter(job => job.automationDecision === "needs_input") : reviewFilter === "approval" ? available.filter(job => ["approval", "unclassified"].includes(job.automationDecision)) : available;
+  const pageSize = Number(state.jobsVisible || 20);
+  const visible = rawVisible.slice(0, pageSize);
+  const hasMore = rawVisible.length > visible.length;
   const reviewTotal = available.length;
   const activeApps = state.applications.filter(item => item.stage !== "closed").length;
   const interviews = state.applications.filter(item => ["interview", "offer"].includes(item.rawStage || item.stage)).length;
@@ -322,12 +419,12 @@ function renderToday() {
       <section>
         <div class="section-heading"><div><h2>Opportunity queue</h2><p>Every role shows what ApplyPilot can safely do next.</p></div><div class="section-actions"><button class="text-button" data-action="show-matches" data-filter="matches">All</button><button class="text-button" data-action="show-matches" data-filter="auto">Auto-submit</button><button class="text-button" data-action="show-matches" data-filter="approval">Approve</button><button class="text-button" data-action="show-matches" data-filter="input">Needs input</button><button class="text-button" data-action="show-matches" data-filter="saved">Saved</button><button class="text-button" data-action="${remoteEnabled ? "scan" : "reset"}">${remoteEnabled ? "Refresh" : "Reset demo"}</button></div></div>
         <div class="job-list">
-          ${visible.length ? visible.map(jobCard).join("") : `<div class="empty-state"><h2>${reviewFilter === "saved" ? "No saved roles" : "No current matches"}</h2><p>${reviewFilter === "saved" ? "Use Save for later on a role you may apply to within 30 days." : "The scanner is running, but it will not fill this list with weak full-time matches."}</p><button class="primary-button" data-action="scan">Run job scan</button></div>`}
+          ${visible.length ? visible.map(jobCard).join("") + (hasMore ? `<button class="secondary-button" style="margin-top:10px;width:100%" data-action="load-more-jobs">Show ${Math.min(20, rawVisible.length - visible.length)} more · ${visible.length}/${rawVisible.length}</button>` : "") : `<div class="empty-state"><h2>${reviewFilter === "saved" ? "No saved roles" : "No current matches"}</h2><p>${reviewFilter === "saved" ? "Use Save for later on a role you may apply to within 30 days." : "The scanner is running, but it will not fill this list with weak full-time matches."}</p><button class="primary-button" data-action="scan">Run job scan</button></div>`}
         </div>
       </section>
       <aside class="panel activity-panel">
         <div class="section-heading"><div><h2>Agent activity</h2><p>Latest automated actions</p></div></div>
-        <div class="activity-list">${state.activity.slice(0, 5).map(item => `<div class="activity-item"><span class="activity-dot"></span><p>${item.text}</p><time>${item.time}</time></div>`).join("")}</div>
+        <div class="activity-list">${state.activity.slice(0, 5).map(item => { const f=friendlyActivity(item); return `<div class="activity-item"><span class="activity-dot">${f.icon}</span><p>${escapeHtml(f.friendly)}</p><time>${escapeHtml(f.ago)}</time></div>`; }).join("")}</div>
         <div class="ai-usage"><small>AI resume packs created</small><strong>${state.analytics?.tailored_packs || 0}</strong><small>Provider quota is checked only when a tailored pack is requested.</small></div>
       </aside>
     </div>`;
@@ -475,16 +572,23 @@ function renderSettings() {
       ${toggle("followups", "Prepare automatic follow-ups", s.followups)}
       ${toggle("browserNotifications", "Browser notifications", s.browserNotifications)}
       ${toggle("feedbackLearning", "Learn from relevant / not relevant feedback", s.feedbackLearning)}
-      <div class="field"><label for="ai-budget">AI resume packs per day</label><input id="ai-budget" type="number" min="1" max="12" value="${s.aiDailyBudget || 4}"><small>After this limit, truthful deterministic tailoring remains available for free.</small></div>
-      <div class="field" style="margin-top:16px"><label for="api-token">Private API token</label><input id="api-token" type="password" placeholder="Only needed after deployment" value="${localStorage.getItem(API_TOKEN_KEY) || ""}"></div>
+      <div class="field"><label for="ai-budget">AI resume packs per day</label><input id="ai-budget" type="number" min="1" max="30" value="${s.aiDailyBudget || 12}"><small>After this limit, truthful deterministic tailoring remains available for free. Personal use suggested: 12-15.</small></div>
+      <div class="field" style="margin-top:16px"><label for="api-token">Private API token</label><input id="api-token" type="password" placeholder="Only needed after deployment" value="${getApiToken() || ""}">${isTokenExpiringSoon() ? `<small style="color:#b45309">Token expires soon — refresh it in Cloudflare Workers.</small>` : ""}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:20px"><button class="secondary-button" data-action="connect">Test backend</button><button class="secondary-button" data-action="export-data">Export data</button>${remoteEnabled ? "" : `<button class="secondary-button danger-button" data-action="reset">Reset demo</button>`}</div>
+    </section>
+    <section class="panel settings-section" style="grid-column:1/-1"><h2>Appearance & comfort</h2>
+      ${toggle("compactView", "Compact card view (more jobs per screen)", s.compactView)}
+      ${toggle("reduceMotion", "Reduce animations (calmer feel)", s.reduceMotion)}
+      <div class="field"><label for="font-scale">Text size</label><select id="font-scale"><option value="small" ${s.fontScale==="small"?"selected":""}>Small</option><option value="medium" ${!s.fontScale||s.fontScale==="medium"?"selected":""}>Medium (recommended)</option><option value="large" ${s.fontScale==="large"?"selected":""}>Large</option></select><small>One-stop should never feel cramped — pick what your eyes like.</small></div>
+      <div class="field"><label for="saved-filter">Default Review filter</label><select id="saved-filter"><option value="matches" ${s.savedFilter==="matches"||!s.savedFilter?"selected":""}>All matches</option><option value="approval" ${s.savedFilter==="approval"?"selected":""}>Needs approval only</option><option value="strong" ${s.savedFilter==="strong"?"selected":""}>Strong 75%+ only</option><option value="saved" ${s.savedFilter==="saved"?"selected":""}>Saved for later</option></select><small>Your Review queue opens with this filter.</small></div>
     </section>
     <section class="panel settings-section" style="grid-column:1/-1"><h2>Job sources</h2>
       <div class="preset-row"><strong>Recommended public boards</strong><span>${SOURCE_PRESETS.map(source => `<button class="preset-button" data-action="add-preset" data-preset="${source.organization}">${source.label}</button>`).join("")}</span></div>
       <div class="settings-grid"><div class="field"><label for="source-provider">Provider</label><select id="source-provider"><option value="greenhouse">Greenhouse</option><option value="lever">Lever</option><option value="ashby">Ashby</option><option value="smartrecruiters">SmartRecruiters</option><option value="workable">Workable</option><option value="recruitee">Recruitee</option><option value="careerpage">Official career page (JSON-LD)</option></select></div><div class="field"><label for="source-org">Board identifier or official URL</label><input id="source-org" placeholder="companyname or https://company.com/careers"></div></div>
       <div class="field"><label for="source-label">Company label</label><input id="source-label" placeholder="Company name shown in the app"></div>
       <button class="secondary-button" data-action="add-source">Add source</button>
-      <div class="job-list" style="margin-top:14px">${(state.sources || []).map(source => `<div class="toggle-row"><span><strong>${source.label}</strong> · ${source.provider}/${source.organization}</span><button class="text-button danger-button" data-action="delete-source" data-id="${source.id}">Remove</button></div>`).join("") || `<p class="job-company">No live sources configured yet.</p>`}</div>
+      <div class="panel" style="margin-top:14px; background: var(--surface-alt);"><h3 style="margin:0 0 8px; font-size:13px;">Bulk add career pages (one per line)</h3><p class="job-company" style="margin:0 0 8px;">Paste official careers URLs. Every valid page will be checked every 5 min and matching jobs auto-appear in Review.</p><textarea id="bulk-career-urls" rows="3" placeholder="https://razorpay.com/careers&#10;https://careers.swiggy.com&#10;https://www.atlassian.com/careers"></textarea><div style="display:flex; gap:8px; margin-top:8px;"><button class="primary-button" data-action="add-bulk-career">Add all career pages</button><button class="text-button" data-action="preview-bulk-career">Preview</button><span id="bulk-preview" class="job-company" style="align-self:center;"></span></div></div>
+      <div class="job-list" style="margin-top:14px">${(state.sources || []).map(source => `<div class="toggle-row"><span><strong>${source.label}</strong> · ${source.provider}/${source.organization} ${source.last_error ? `<small style="color:var(--red)">• ${escapeHtml(source.last_error.slice(0,40))}</small>` : `<small style="color:var(--green)">• live</small>`}</span><button class="text-button danger-button" data-action="delete-source" data-id="${source.id}">Remove</button></div>`).join("") || `<p class="job-company">No live sources configured yet. Add a company career page above.</p>`}</div>
     </section>
     <section class="panel settings-section" style="grid-column:1/-1"><h2>Resume variants</h2><div class="job-list">${(state.resumeVariants || []).map(variant => `<div class="toggle-row"><span><strong>${escapeHtml(variant.name)}</strong><small>${escapeHtml(variant.target_titles)}</small></span><span class="badge">${escapeHtml(variant.filename)}</span></div>`).join("") || `<p class="job-company">No variants configured.</p>`}</div></section>
     <section class="panel settings-section" style="grid-column:1/-1"><h2>Application answer library</h2><p class="job-company">Save verified answers for protected application forms. Copy them into official portals; ApplyPilot does not auto-submit forms.</p><div class="settings-grid">${[{ key: "notice_period", label: "Notice period" }, { key: "expected_ctc", label: "Expected CTC" }, { key: "work_authorization", label: "Work authorization" }, { key: "linkedin", label: "LinkedIn URL" }, { key: "portfolio", label: "Portfolio URL" }].map(field => { const answer = (state.answers || []).find(item => item.key === field.key) || {}; return `<div class="field"><label for="answer-${field.key}">${field.label}</label><input id="answer-${field.key}" value="${escapeHtml(answer.value || "")}" placeholder="Add your verified answer"></div>`; }).join("")}</div><button class="secondary-button" data-action="save-answers">Save answer library</button></section>
@@ -505,7 +609,12 @@ function bindViewEvents() {
     const key = button.dataset.toggle;
     state.settings[key] = !state.settings[key];
     saveState(); render();
+    if (["compactView","reduceMotion"].includes(key)) toast(key==="compactView" ? (state.settings.compactView ? "Compact view on" : "Comfortable view on") : (state.settings.reduceMotion ? "Calmer animations on" : "Animations on"));
   }));
+  const fontSel = document.getElementById ? document.getElementById("font-scale") : null;
+  if (fontSel) fontSel.addEventListener("change", e => { state.settings.fontScale = e.target.value; saveState(); render(); toast(`Text size: ${e.target.value}`); });
+  const filterSel = document.getElementById ? document.getElementById("saved-filter") : null;
+  if (filterSel) filterSel.addEventListener("change", e => { state.settings.savedFilter = e.target.value; saveState(); render(); toast(`Default filter: ${e.target.value}`); });
 }
 
 async function handleAction(event) {
@@ -532,7 +641,8 @@ async function handleAction(event) {
   if (action === "approve") return await approveJob(id);
   if (action === "skip") updateJob(id, "skipped", "Job skipped and removed from your queue");
   if (action === "save") updateJob(id, "shortlisted", "Saved for later. This role is retained for 30 days.");
-  if (action === "show-matches") { state.reviewFilter = event.currentTarget.dataset.filter || "matches"; saveState(); render(); }
+  if (action === "show-matches") { state.reviewFilter = event.currentTarget.dataset.filter || "matches"; state.jobsVisible = 20; saveState(); render(); }
+  if (action === "load-more-jobs") { state.jobsVisible = Number(state.jobsVisible || 20) + 20; saveState(); render(); window.scrollTo({ top: document.body.scrollHeight * 0.6, behavior: "smooth" }); }
   if (action === "details") showJob(id);
   if (action === "open-application") {
     const applyUrl = event.currentTarget.dataset.url;
@@ -544,11 +654,15 @@ async function handleAction(event) {
   if (action === "scan") runScan();
   if (action === "outreach") reviewOutreach(id);
   if (action === "connect") {
-    localStorage.setItem(API_TOKEN_KEY, document.querySelector("#api-token").value.trim());
+    setApiToken(document.querySelector("#api-token").value.trim());
     await connectBackend(false);
   }
   if (action === "add-source") await addSource();
   if (action === "add-preset") await addPreset(event.currentTarget.dataset.preset);
+  if (action === "add-bulk-career") await addBulkCareer();
+  if (action === "preview-bulk-career") previewBulkCareer();
+  if (action === "download-pack-pdf") await downloadPackPdf(id);
+  if (action === "copy-pack-link") await copyPackLink(id);
   if (action === "save-answers") await saveAnswerLibrary();
   if (action === "add-evidence") await addEvidence();
   if (action === "toggle-evidence") await toggleEvidence(id, event.currentTarget.dataset.active === "1");
@@ -608,7 +722,7 @@ function showApplicationPack(id) {
     <details class="workflow-details"><summary>Resume versions (${versions.length})</summary><div class="version-list">${versionMarkup}</div></details>
     <details class="workflow-details"><summary>Complete document history (${documentVersions.length})</summary><div class="version-list">${documentVersions.map(version => `<article><div><strong>${escapeHtml(version.kind.replace("_", " "))} v${version.version_number}</strong><small>${escapeHtml(version.created_at)}</small></div><span class="badge">${escapeHtml(version.mime_type)}</span></article>`).join("") || `<p class="job-company">No immutable document snapshots yet.</p>`}</div></details>
     <details class="workflow-details"><summary>Screening answer library</summary><div class="answer-list">${answerMarkup}</div></details>
-    <div class="dialog-actions"><button class="secondary-button" id="view-resume">View resume</button><button class="secondary-button" id="download-json">Resume JSON</button><button class="secondary-button" id="download-tex">LaTeX</button><button class="secondary-button" id="download-pdf">Download PDF</button><button class="secondary-button" id="open-application">Open application</button><button class="secondary-button" id="mark-applied">Mark applied</button>${resumeApproved ? `<span class="approval-note">Resume approved</span>` : `<button class="primary-button" id="approve-tailored">Approve resume</button>`}</div>
+    <div class="dialog-actions" style="grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));"><button class="secondary-button" id="view-resume">View resume</button><button class="secondary-button" id="download-json">Resume JSON</button><button class="secondary-button" id="download-tex">LaTeX</button><button class="secondary-button" id="download-pdf">Download PDF</button><button class="secondary-button" id="copy-pack-link" data-action="copy-pack-link" data-id="${escapeHtml(item.id)}">Copy share</button><button class="secondary-button" id="open-application">Open application</button><button class="secondary-button" id="mark-applied">Mark applied</button>${resumeApproved ? `<span class="approval-note">Resume approved</span>` : `<button class="primary-button" id="approve-tailored">Approve resume</button>`}</div>
     <button class="text-button pack-followup" id="prepare-interview">Create interview workspace</button>
     ${item.submissionStatus === "confirmed" ? `<button class="text-button pack-followup" id="create-followup">Create recruiter follow-up</button>` : `<span class="approval-note pack-followup">Follow-up unlocks after submission confirmation</span>`}</div>`;
   dialog.showModal();
@@ -652,6 +766,7 @@ function showApplicationPack(id) {
   };
   dialog.querySelector("#create-followup")?.addEventListener("click", () => showFollowupComposer(item));
   dialog.querySelector("#prepare-interview").onclick = () => createInterviewWorkspace(item);
+  dialog.querySelector("#copy-pack-link")?.addEventListener("click", () => copyPackLink(item.id));
 }
 
 function downloadResumePdfLegacy(item) {
@@ -1110,6 +1225,62 @@ async function deleteSource(id) {
   } catch (error) { toast(error.message); }
 }
 
+async function addBulkCareer() {
+  if (!remoteEnabled) return toast("Connect the cloud backend first.");
+  const raw = document.querySelector("#bulk-career-urls")?.value || "";
+  const urls = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  if (!urls.length) return toast("Paste at least one careers URL.");
+  let added = 0;
+  for (const url of urls) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:") throw new Error("HTTPS only");
+      const label = parsed.hostname.replace(/^www\./, "").split(".")[0].replace(/-/g, " ");
+      const pretty = label.charAt(0).toUpperCase() + label.slice(1);
+      await api("/sources", { method: "POST", body: JSON.stringify({ provider: "careerpage", organization: url, label: pretty }) });
+      added += 1;
+    } catch (e) { toast(`${url}: ${e.message}`, { tone: "error" }); }
+  }
+  await connectBackend();
+  toast(`${added} career pages added. They will be checked every 5 min.`);
+}
+
+function previewBulkCareer() {
+  const raw = document.querySelector("#bulk-career-urls")?.value || "";
+  const urls = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  const preview = document.querySelector("#bulk-preview");
+  if (!preview) return;
+  if (!urls.length) { preview.textContent = "No URLs pasted."; return; }
+  const valid = urls.filter(u => { try { return new URL(u).protocol === "https:"; } catch { return false; } });
+  preview.textContent = `${valid.length}/${urls.length} valid HTTPS URLs ready — will appear as careerpage sources.`;
+}
+
+async function downloadPackPdf(id) {
+  const item = state.applications.find(a => String(a.id) === String(id));
+  if (!item?.latex) return toast("No LaTeX found for this pack.");
+  try {
+    const blob = new Blob([item.latex], { type: "application/x-latex" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${item.company}-${item.title}.tex`.replace(/[^a-z0-9.-]/gi, "_");
+    a.click(); URL.revokeObjectURL(url);
+    toast("Downloaded .tex — compile to PDF or use the preview.");
+  } catch (e) { toast(e.message, { tone: "error" }); }
+}
+
+async function copyPackLink(id) {
+  const item = state.applications.find(a => String(a.id) === String(id));
+  if (!item) return;
+  const text = `${item.title} at ${item.company}\nScore: ${item.tailoredScore || item.score}%\nApply: ${item.applyUrl}\n` + (item.coverLetter ? `\nCover letter:\n${item.coverLetter.slice(0,400)}...` : "");
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Copied pack summary — paste anywhere.");
+  } catch {
+    downloadText(`${item.company}-pack.txt`, text, "text/plain");
+    toast("Copied via download — clipboard not available.");
+  }
+}
+
 async function openLead(id, url) {
   const lead = state.leads.find(item => String(item.id) === String(id));
   if (!lead) return window.open(url, "_blank", "noopener,noreferrer");
@@ -1275,6 +1446,20 @@ document.querySelector("#scan-toggle").addEventListener("click", async () => {
   }
   saveState(); render(); toast(state.settings.searchPaused ? "Automatic and manual job scans are paused." : "Job scanning resumed.", { title: state.settings.searchPaused ? "Scans paused" : "Scans resumed" });
 });
+document.querySelector("#theme-toggle")?.addEventListener("click", () => {
+  const current = document.documentElement.getAttribute("data-theme");
+  const next = current === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("applypilot-theme", next); } catch {}
+  document.querySelector("#theme-toggle").textContent = next === "dark" ? "☾" : "◐";
+  toast(`Theme: ${next}`, { duration: 1400 });
+});
+try {
+  const savedTheme = localStorage.getItem("applypilot-theme");
+  if (savedTheme) document.querySelector("#theme-toggle").textContent = savedTheme === "dark" ? "☾" : "◐";
+  else if (window.matchMedia("(prefers-color-scheme: dark)").matches) document.querySelector("#theme-toggle").textContent = "☾";
+} catch {}
+
 document.querySelector("#date-label").textContent = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "short", day: "numeric" }).format(new Date());
 
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js"));
