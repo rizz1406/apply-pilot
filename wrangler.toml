@@ -9,8 +9,8 @@ remote = true
 
 [vars]
 APP_ORIGIN = "https://applypilot.pages.dev"
-GEMINI_MODEL = "gemini-3.5-flash"
-GEMINI_FAST_MODEL = "gemini-3.5-flash"
+GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_FAST_MODEL = "gemini-1.5-flash"
 DEMO_MODE = "false"
 
 [[d1_databases]]
