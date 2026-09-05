@@ -33,3 +33,14 @@ test("does not use a Naukri URL as the visible job title", () => {
   const [link] = extractTrustedLinks('https://www.naukri.com/job-listings-software-engineer-accenture-solutions-pvt-ltd-gurugram-3-to-8-years-050826919157');
   assert.equal(link.label, "");
 });
+
+test("recognizes Instahyre and Hirist alert links as trusted", () => {
+  const links = extractTrustedLinks(`
+    <a href="https://www.instahyre.com/job-description-data-analyst-acme/">Data Analyst at Acme</a>
+    <a href="https://www.hirist.tech/j/senior-analyst-beta-12345">Senior Analyst at Beta</a>
+  `);
+  assert.equal(links[0].provider, "instahyre");
+  assert.equal(links[0].label, "Data Analyst at Acme");
+  assert.equal(links[1].provider, "hirist");
+  assert.equal(links[1].label, "Senior Analyst at Beta");
+});

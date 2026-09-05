@@ -16,6 +16,8 @@ test("renders the opportunity Inbox without a runtime error", async () => {
     append() {},
     close() {},
     remove() {},
+    setAttribute() {},
+    getAttribute() { return null; },
     querySelector() { return makeElement(); },
     querySelectorAll() { return []; }
   });

@@ -126,16 +126,24 @@ async function careerpage(source) {
   });
 }
 
+// Board-wide feeds (Remote OK, We Work Remotely) return 100+ mixed-role postings per fetch.
+// Pre-filtering to plausibly relevant titles here keeps per-scan DB round-trips bounded
+// instead of writing/dedup-checking every unrelated posting on the board.
+const relevantTitle = /data|analy|\bbi\b|\bsql\b|report|insight|dashboard/i;
+
 async function remoteok(source) {
   // Public API — RemoteOK's own terms only require attribution, no anti-scraping restriction.
   const data = await getJson("https://remoteok.com/api");
-  return (Array.isArray(data) ? data : []).filter(job => job.id && job.position).map(job => ({
-    externalId: String(job.id), provider: "remoteok", company: job.company || source.label,
-    title: job.position, location: job.location || "Remote (Worldwide)", workplaceType: "Remote",
-    description: stripHtml(job.description || ""), applyUrl: job.url || job.apply_url,
-    salaryText: job.salary_min && job.salary_max ? `$${job.salary_min} - $${job.salary_max}` : "",
-    publishedAt: job.date || null
-  }));
+  return (Array.isArray(data) ? data : [])
+    .filter(job => job.id && job.position && relevantTitle.test(job.position))
+    .slice(0, 30)
+    .map(job => ({
+      externalId: String(job.id), provider: "remoteok", company: job.company || source.label,
+      title: job.position, location: job.location || "Remote (Worldwide)", workplaceType: "Remote",
+      description: stripHtml(job.description || ""), applyUrl: job.url || job.apply_url,
+      salaryText: job.salary_min && job.salary_max ? `$${job.salary_min} - $${job.salary_max}` : "",
+      publishedAt: job.date || null
+    }));
 }
 
 async function weworkremotely(source) {
@@ -147,7 +155,7 @@ async function weworkremotely(source) {
     return match[1].replace(/^<!\[CDATA\[/, "").replace(/\]\]>$/, "").trim();
   };
   return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(match => match[1]).map((block, index) => {
-    const rawTitle = field(block, "title");
+    const rawTitle = stripHtml(field(block, "title"));
     const separator = rawTitle.indexOf(":");
     const company = separator > -1 ? rawTitle.slice(0, separator).trim() : source.label;
     const title = separator > -1 ? rawTitle.slice(separator + 1).trim() : rawTitle;
@@ -158,7 +166,7 @@ async function weworkremotely(source) {
       description: stripHtml(field(block, "description")), applyUrl,
       salaryText: "", publishedAt: field(block, "pubDate") || null
     };
-  }).filter(job => job.title && job.applyUrl);
+  }).filter(job => job.title && job.applyUrl && relevantTitle.test(job.title)).slice(0, 30);
 }
 
 export async function fetchSource(source) {

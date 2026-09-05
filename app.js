@@ -58,6 +58,12 @@ function ensureAuth() {
   }
 }
 const SOURCE_PRESETS = [
+  { provider: "greenhouse", organization: "highradius", label: "HighRadius (Hyderabad)" },
+  { provider: "lever", organization: "zeta", label: "Zeta (Hyderabad)" },
+  { provider: "lever", organization: "cred", label: "CRED (Hyderabad)" },
+  { provider: "lever", organization: "meesho", label: "Meesho (Bangalore)" },
+  { provider: "greenhouse", organization: "groww", label: "Groww (Mumbai)" },
+  { provider: "greenhouse", organization: "postman", label: "Postman (Bangalore)" },
   { provider: "ashby", organization: "sarvam", label: "Sarvam" },
   { provider: "ashby", organization: "atlan", label: "Atlan" },
   { provider: "ashby", organization: "certifyos", label: "CertifyOS" },
@@ -68,8 +74,11 @@ const SOURCE_PRESETS = [
   { provider: "ashby", organization: "mem0", label: "Mem0" },
   { provider: "ashby", organization: "flagright.com", label: "Flagright" },
   { provider: "lever", organization: "shopback-2", label: "ShopBack" },
-  { provider: "greenhouse", organization: "databricks", label: "Databricks" }
+  { provider: "greenhouse", organization: "databricks", label: "Databricks" },
+  { provider: "remoteok", organization: "", label: "Remote OK (public board)" },
+  { provider: "weworkremotely", organization: "", label: "We Work Remotely (public board)" }
 ];
+const presetKey = source => `${source.provider}:${source.organization}`;
 
 const seedState = {
   activeView: "inbox",
@@ -330,6 +339,8 @@ function isReviewMatch(job) {
   return job.status === "new" && !["internship", "freelance"].includes(job.opportunityType) && Number(job.score || 0) >= minimumScore;
 }
 
+const mobilePrimaryIds = ["inbox", "pipeline", "freelance", "today"];
+
 function renderNav(activeView) {
   const totals = counts();
   const button = item => `
@@ -339,9 +350,30 @@ function renderNav(activeView) {
       <span class="nav-count">${totals[item.id]}</span>
     </button>`;
   document.querySelector(".desktop-nav").innerHTML = navItems.map(button).join("");
-  const mobileIds = new Set(["inbox", "today", "internships", "freelance", "pipeline", "outreach", "settings"]);
-  document.querySelector(".mobile-nav").innerHTML = navItems.filter(item => mobileIds.has(item.id)).map(button).join("");
+
+  const primary = navItems.filter(item => mobilePrimaryIds.includes(item.id));
+  const overflow = navItems.filter(item => !mobilePrimaryIds.includes(item.id));
+  const overflowActive = overflow.some(item => item.id === activeView);
+  const overflowCount = overflow.reduce((sum, item) => sum + (Number(totals[item.id]) || 0), 0);
+  document.querySelector(".mobile-nav").innerHTML = primary.map(button).join("") + `
+    <button class="nav-button ${overflowActive ? "active" : ""}" id="nav-more-toggle" aria-haspopup="true" aria-expanded="${navSheetOpen}">
+      <span class="nav-glyph" aria-hidden="true">⋯</span>
+      <span>More</span>
+      <span class="nav-count">${overflowCount || ""}</span>
+    </button>`;
+  document.querySelector("#nav-sheet-list").innerHTML = overflow.map(button).join("");
+  syncNavSheet();
 }
+
+let navSheetOpen = false;
+function syncNavSheet() {
+  document.querySelector("#nav-sheet")?.classList.toggle("open", navSheetOpen);
+  document.querySelector("#nav-sheet-backdrop")?.classList.toggle("open", navSheetOpen);
+  const toggle = document.querySelector("#nav-more-toggle");
+  if (toggle) toggle.setAttribute("aria-expanded", String(navSheetOpen));
+}
+function toggleNavSheet() { navSheetOpen = !navSheetOpen; syncNavSheet(); }
+function closeNavSheet() { if (navSheetOpen) { navSheetOpen = false; syncNavSheet(); } }
 
 function showSkeleton(count = 3) {
   app.innerHTML = `<div class="job-list">${Array.from({ length: count }).map(() => `<div class="skeleton-card"><div class="skeleton skeleton-line" style="width:42%"></div><div class="skeleton skeleton-line" style="width:78%"></div><div class="skeleton skeleton-line" style="width:62%"></div></div>`).join("")}</div>`;
@@ -396,6 +428,24 @@ function render() {
   bindViewEvents();
 }
 
+function onboardingSteps() {
+  return [
+    { done: !!getApiToken(), label: "Connect your cloud", detail: "Paste your private API token once", view: "settings" },
+    { done: (state.sources || []).length > 0, label: "Add a job source", detail: "A company career page or a public board", view: "settings" },
+    { done: !!String(state.settings.role || "").trim() && !!String(state.settings.requiredSkills || "").trim(), label: "Set your target role & skills", detail: "So every scan scores against your profile", view: "settings" },
+    { done: (state.resumeVariants || []).length > 0 || (state.evidence || []).length > 0, label: "Upload your resume", detail: "Used as the verified master profile for tailoring", view: "settings" }
+  ];
+}
+function renderOnboarding() {
+  const steps = onboardingSteps();
+  const remaining = steps.filter(step => !step.done);
+  if (!remaining.length) return "";
+  return `<section class="panel onboarding-card">
+    <div class="section-heading"><div><h2>Get ApplyPilot fully active</h2><p>${remaining.length} of ${steps.length} step${steps.length === 1 ? "" : "s"} left before the scanner has something real to find.</p></div></div>
+    <div class="onboarding-steps">${steps.map(step => `<button class="onboarding-step ${step.done ? "done" : ""}" data-action="go-view" data-view-target="${step.view}"><span class="onboarding-check" aria-hidden="true">${step.done ? "✓" : ""}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span></button>`).join("")}</div>
+  </section>`;
+}
+
 function renderInbox() {
   const matches = state.jobs.filter(isReviewMatch);
   const strong = matches.filter(job => Number(job.score) >= 75);
@@ -414,6 +464,7 @@ function renderInbox() {
   const aiBudget = Number(state.settings.aiDailyBudget || 4);
   const recentTask = (state.queuedTasks || [])[0];
   app.innerHTML = `<section class="inbox-hero"><div><span>One prioritized queue</span><h2>${actions.length ? `${actions.length} action${actions.length === 1 ? " needs" : "s need"} attention` : "You are caught up"}</h2><p>Matches, application proof, recruiter replies, and interviews are ordered here.</p></div><button class="primary-button" data-action="scan">Scan official sources</button></section>
+    ${renderOnboarding()}
     <section class="summary-grid">${metric("Strong new matches", strong.length, "75% fit or higher")}${metric("Follow-ups due", due.length, "Approval required")}${metric("Replies", replies.length, "Automation stops")}${metric("Interviews", upcoming.length, "Prep workspaces")}</section>
     <div class="inbox-layout"><section><div class="section-heading"><div><h2>Next actions</h2><p>Open an item to continue the exact workflow.</p></div></div><div class="action-feed">${actions.length ? actions.map(item => `<button class="action-feed-item ${item.tone}" data-action="go-view" data-view-target="${item.view}"><span class="action-symbol"></span><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></span><b>Open</b></button>`).join("") : `<div class="empty-state"><h2>No action needed</h2><p>ApplyPilot will add fresh matches, confirmations, replies, and interviews here.</p></div>`}</div></section>
     <aside class="panel system-glance"><h2>Automation today</h2><dl><div><dt>Scanner</dt><dd>${state.settings.searchPaused ? "Paused" : "Active"}</dd></div><div><dt>Last queued task</dt><dd>${escapeHtml(recentTask?.status || "No queued run")}</dd></div><div><dt>AI resume budget</dt><dd>${Math.min(aiUsed, aiBudget)} / ${aiBudget}</dd></div><div><dt>Fallback</dt><dd>Deterministic and truthful</dd></div></dl></aside></div>`;
@@ -625,7 +676,7 @@ function renderSettings() {
       <div class="field"><label for="saved-filter">Default Review filter</label><select id="saved-filter"><option value="matches" ${s.savedFilter==="matches"||!s.savedFilter?"selected":""}>All matches</option><option value="approval" ${s.savedFilter==="approval"?"selected":""}>Needs approval only</option><option value="strong" ${s.savedFilter==="strong"?"selected":""}>Strong 75%+ only</option><option value="saved" ${s.savedFilter==="saved"?"selected":""}>Saved for later</option></select><small>Your Review queue opens with this filter.</small></div>
     </section>
     <section class="panel settings-section" style="grid-column:1/-1"><h2>Job sources</h2>
-      <div class="preset-row"><strong>Recommended public boards</strong><span>${SOURCE_PRESETS.map(source => `<button class="preset-button" data-action="add-preset" data-preset="${source.organization}">${source.label}</button>`).join("")}</span></div>
+      <div class="preset-row"><strong>Recommended public boards</strong><span>${SOURCE_PRESETS.map(source => `<button class="preset-button" data-action="add-preset" data-preset="${escapeHtml(presetKey(source))}">${escapeHtml(source.label)}</button>`).join("")}</span></div>
       <div class="settings-grid"><div class="field"><label for="source-provider">Provider</label><select id="source-provider"><option value="greenhouse">Greenhouse</option><option value="lever">Lever</option><option value="ashby">Ashby</option><option value="smartrecruiters">SmartRecruiters</option><option value="workable">Workable</option><option value="recruitee">Recruitee</option><option value="careerpage">Official career page (JSON-LD)</option><option value="remoteok">Remote OK (public board)</option><option value="weworkremotely">We Work Remotely (public board)</option></select></div><div class="field"><label for="source-org">Board identifier or official URL</label><input id="source-org" placeholder="companyname, https://company.com/careers, or leave blank for Remote OK / We Work Remotely"></div></div>
       <div class="field"><label for="source-label">Company label</label><input id="source-label" placeholder="Company name shown in the app"></div>
       <button class="secondary-button" data-action="add-source">Add source</button>
@@ -1278,8 +1329,8 @@ async function addSource() {
   } catch (error) { toast(error.message); }
 }
 
-async function addPreset(organization) {
-  const source = SOURCE_PRESETS.find(item => item.organization === organization);
+async function addPreset(key) {
+  const source = SOURCE_PRESETS.find(item => presetKey(item) === key);
   if (!source) return;
   try { await api("/sources", { method: "POST", body: JSON.stringify(source) }); await connectBackend(); toast(`${source.label} is now monitored.`); }
   catch (error) { toast(error.message); }
@@ -1478,10 +1529,15 @@ function toast(message, { title = "ApplyPilot", duration = 4000, tone = "info" }
 
 document.addEventListener("click", event => {
   const nav = event.target.closest("[data-view]");
-  if (!nav) return;
-  state.activeView = nav.dataset.view;
-  saveState(); render();
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  if (nav) {
+    state.activeView = nav.dataset.view;
+    saveState(); render();
+    closeNavSheet();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+  if (event.target.closest("#nav-more-toggle")) { toggleNavSheet(); return; }
+  if (event.target.closest("#nav-sheet-backdrop")) { closeNavSheet(); return; }
 });
 
 document.querySelector("#demo-action").addEventListener("click", async () => {

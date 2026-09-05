@@ -151,6 +151,8 @@ function trustedProvider(url) {
   if (host.endsWith("linkedin.com") && url.pathname.includes("/jobs/view/")) return "linkedin";
   if (host.endsWith("naukri.com") && url.pathname.includes("job-listings")) return "naukri";
   if (host.endsWith("indeed.com") && url.pathname.includes("viewjob")) return "indeed";
+  if (host.endsWith("instahyre.com")) return "instahyre";
+  if (host.endsWith("hirist.tech") || host.endsWith("hirist.com")) return "hirist";
   if (host === "jobs.lever.co") return "lever";
   if (host.endsWith("greenhouse.io")) return "greenhouse";
   if (host === "jobs.ashbyhq.com") return "ashby";
@@ -220,7 +222,7 @@ export async function syncJobAlertEmails(env) {
   const state = await env.DB.prepare("SELECT value FROM integration_state WHERE key = 'job_alert_after'").first();
   const now = Math.floor(Date.now() / 1000);
   const after = Number(state?.value || now - 86400) - 60;
-  const query = `after:${after} (from:linkedin.com OR from:naukri.com OR from:indeed.com OR subject:"job alert")`;
+  const query = `after:${after} (from:linkedin.com OR from:naukri.com OR from:indeed.com OR from:instahyre.com OR from:hirist.tech OR from:hirist.com OR subject:"job alert")`;
   const listing = await gmail(env, `/messages?q=${encodeURIComponent(query)}&maxResults=30`);
   let discovered = 0;
 
