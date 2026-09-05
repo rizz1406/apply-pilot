@@ -5,7 +5,13 @@ function base64Url(value) {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+// Cached in module scope so a single sync (which can touch dozens of messages) doesn't
+// burn a subrequest refreshing the token before every call and risk hitting Cloudflare's
+// per-invocation subrequest limit.
+let cachedAccessToken = null;
+
 async function accessToken(env) {
+  if (cachedAccessToken && cachedAccessToken.expiresAt > Date.now() + 30000) return cachedAccessToken.value;
   const required = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"];
   if (required.some(name => !env[name])) throw new Error("Gmail OAuth is not configured");
   const body = new URLSearchParams({
@@ -16,7 +22,9 @@ async function accessToken(env) {
   });
   const response = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
   if (!response.ok) throw new Error("Unable to refresh Gmail access token");
-  return (await response.json()).access_token;
+  const payload = await response.json();
+  cachedAccessToken = { value: payload.access_token, expiresAt: Date.now() + Number(payload.expires_in || 3600) * 1000 };
+  return cachedAccessToken.value;
 }
 
 async function gmail(env, path, options = {}) {
