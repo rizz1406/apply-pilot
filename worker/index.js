@@ -5,7 +5,7 @@ import { scoreJob } from "./matching.js";
 import { notify } from "./notifications.js";
 import { contentHash, createTailoredPack } from "./resume-tailor.js";
 import { evaluateApplicationGate } from "./quality-gate.js";
-import { createInterviewPrep } from "./application-tools.js";
+import { createInterviewPrep, duplicateKey } from "./application-tools.js";
 import { atsReadiness, checklistDefaults, mergeVerifiedEvidence, resumeDiff, validateRevisionInstruction } from "./resume-workflow.js";
 import { authorizeRequest } from "./access-auth.js";
 import { runMatchingEvaluation } from "./evaluation.js";
@@ -318,10 +318,18 @@ async function route(request, env) {
     const opportunityType = freelance ? "freelance" : internship ? "internship" : "full_time";
     const scoreSettings = freelance ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.freelance_titles || ""}`, minimum_salary: null } : internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
     const match = scoreJob(candidate, scoreSettings);
+    const dupKey = duplicateKey(candidate);
+    const existingDup = await env.DB.prepare("SELECT id, score FROM jobs WHERE duplicate_key = ? AND status IN ('new','shortlisted','approved') LIMIT 1").bind(dupKey).first();
+    if (existingDup) {
+      if (Number(existingDup.score || 0) >= match.score) {
+        return json({ ok: true, id: existingDup.id, score: existingDup.score, duplicate: true }, 200);
+      }
+      await env.DB.prepare("UPDATE jobs SET status='expired' WHERE id=?").bind(existingDup.id).run();
+    }
     const id = `manual:${crypto.randomUUID()}`;
-    await env.DB.prepare(`INSERT INTO jobs (id, external_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, score, score_reasons, opportunity_type)
-      VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(id, id, candidate.company, candidate.title, candidate.location, candidate.workplaceType, candidate.description.slice(0, 30000), candidate.applyUrl, body.salaryText || "", match.score, JSON.stringify(match.reasons), opportunityType).run();
+    await env.DB.prepare(`INSERT INTO jobs (id, external_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, score, score_reasons, opportunity_type, duplicate_key)
+      VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(id, id, candidate.company, candidate.title, candidate.location, candidate.workplaceType, candidate.description.slice(0, 30000), candidate.applyUrl, body.salaryText || "", match.score, JSON.stringify(match.reasons), opportunityType, dupKey).run();
     await activity(env, "job_added", `Manually added ${candidate.title} at ${candidate.company}`, "job", id);
     return json({ ok: true, id, score: match.score }, 201);
   }
@@ -332,14 +340,17 @@ async function route(request, env) {
   }
   if (method === "POST" && path === "/api/sources") {
     const body = await request.json();
-    if (!['greenhouse', 'lever', 'ashby', 'smartrecruiters', 'workable', 'recruitee', 'careerpage'].includes(body.provider) || !body.organization || !body.label) return json({ error: "provider, organization and label are required" }, 400);
+    const providers = ['greenhouse', 'lever', 'ashby', 'smartrecruiters', 'workable', 'recruitee', 'careerpage', 'remoteok', 'weworkremotely'];
+    const organizationOptional = ['remoteok', 'weworkremotely'].includes(body.provider);
+    if (!providers.includes(body.provider) || !body.label || (!organizationOptional && !body.organization)) return json({ error: "provider and label are required" }, 400);
     if (body.provider === "careerpage") {
       try { const parsed = new URL(body.organization); if (parsed.protocol !== "https:") throw new Error(); } catch { return json({ error: "Career page must be a valid HTTPS URL" }, 400); }
     }
     const table = ['workable', 'recruitee', 'careerpage'].includes(body.provider) ? "ats_sources" : ['ashby', 'smartrecruiters'].includes(body.provider) ? "external_sources" : "sources";
+    const organization = String(body.organization || "").trim();
     await env.DB.prepare(`INSERT INTO ${table} (provider, organization, label) VALUES (?, ?, ?) ON CONFLICT(provider, organization) DO UPDATE SET label = excluded.label, enabled = 1`)
-      .bind(body.provider, body.organization.trim(), body.label.trim()).run();
-    await activity(env, "source_added", `Added ${body.label} job source`, "source", body.organization);
+      .bind(body.provider, organization, body.label.trim()).run();
+    await activity(env, "source_added", `Added ${body.label} job source`, "source", organization);
     return json({ ok: true }, 201);
   }
   const sourceParams = pathMatch(path, "/api/sources/:id");

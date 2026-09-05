@@ -445,6 +445,10 @@ main { margin-left: calc(var(--sidebar) + 32px); min-height: 100vh; padding: 16p
 .panel:hover { box-shadow: var(--shadow-lg); }
 .activity-panel { border-top: 3px solid #f59e0b; position: relative; overflow: hidden; }
 .activity-panel::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+.ai-usage { display: flex; flex-direction: column; gap: 4px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.ai-usage small:first-child { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.ai-usage strong { font-size: 22px; }
+.ai-usage small:last-child { font-size: 11.5px; color: var(--muted); line-height: 1.4; }
 
 .job-list { display: grid; gap: 12px; }
 .job-card {
@@ -689,6 +693,10 @@ dialog::backdrop { background: rgba(11,20,16,.48); backdrop-filter: blur(8px); }
   .metric { min-height: 84px; padding: 14px; }
   .metric strong { font-size: 22px; }
   .job-card { grid-template-columns: 44px minmax(0, 1fr) auto; padding: 14px; gap: 10px; }
+  .pipeline { overflow-x: visible; }
+  .pipeline-grid { min-width: 0; grid-template-columns: 1fr; gap: 16px; }
+  .pipeline-column { min-height: 0; }
+  .pipeline-card .primary-button, .pipeline-card .text-button { min-height: 40px; }
   .company-logo { width: 44px; height: 44px; }
   .job-actions { grid-column: 1 / -1; }
   .job-actions button { flex: 1; min-width: 0; }
@@ -713,9 +721,10 @@ dialog::backdrop { background: rgba(11,20,16,.48); backdrop-filter: blur(8px); }
     -webkit-overflow-scrolling: touch;
   }
   .mobile-nav::-webkit-scrollbar { display: none; }
-  .mobile-nav .nav-button { min-width: 68px; flex: 0 0 auto; min-height: 52px; padding: 6px 4px; flex-direction: column; justify-content: center; gap: 4px; font-size: 10px; border-radius: 12px; }
+  .mobile-nav .nav-button { width: 68px; min-width: 68px; flex: 0 0 auto; min-height: 52px; padding: 6px 4px; flex-direction: column; justify-content: center; gap: 4px; font-size: 10px; border-radius: 12px; scroll-snap-align: start; }
   .mobile-nav .nav-glyph { width: 24px; height: 24px; font-size: 11px; }
   .mobile-nav .nav-count { display: none; }
+  .mobile-nav .nav-button span:nth-child(2) { flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
   .toast-region { left: 12px; right: 12px; bottom: calc(80px + env(safe-area-inset-bottom)); }
   .pack-grid, .resume-command, .workflow-grid, .answer-list, .evidence-form { grid-template-columns: 1fr; }
   .workflow-grid, .answer-list, .evidence-form { grid-template-columns: 1fr; }
