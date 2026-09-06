@@ -35,6 +35,7 @@ try {
   if (hashToken) { setApiToken(hashToken, 365); history.replaceState({}, "", location.pathname + location.search.replace(/[\?&]token=[^&]+/, "").replace(/^\?$/, "") + location.hash.replace(/token=[^&]+/, "")); }
 } catch {}
 let authPromptShown = false;
+let authPromptScheduled = false;
 function ensureAuth() {
   if (authPromptShown) return;
   if (getApiToken()) return;
@@ -145,10 +146,10 @@ async function api(path, options = {}) {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       if (response.status === 401) {
-        if (!authPromptShown) {
-          authPromptShown = true;
-          // De-duplicate: only one auth UI, not two toasts
-          setTimeout(() => ensureAuth(), 300);
+        if (!authPromptScheduled) {
+          authPromptScheduled = true;
+          // De-duplicate: only one scheduled call, not a stack of them from concurrent 401s
+          setTimeout(() => { authPromptScheduled = false; ensureAuth(); }, 300);
         }
         throw new Error("Unauthorized — token missing or expired. Opening connect dialog.");
       }
@@ -160,8 +161,6 @@ async function api(path, options = {}) {
     return data;
   } catch (error) {
     if (error.name === "AbortError") throw new Error("Request timed out. Check your connection.");
-    // Suppress double connection toast when auth dialog is open
-    if (String(error.message).includes("Unauthorized") && authPromptShown) throw error;
     throw error;
   } finally {
     clearTimeout(timeout);
