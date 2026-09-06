@@ -3,7 +3,7 @@ import { prepareApplication } from "./ai.js";
 import { sendNotificationEmail, sendOutreach, syncApplicationConfirmations, syncJobAlertEmails, syncRecruiterReplies } from "./gmail.js";
 import { scoreJob } from "./matching.js";
 import { notify } from "./notifications.js";
-import { contentHash, createTailoredPack } from "./resume-tailor.js";
+import { contentHash, createTailoredPack, parseMasterResume } from "./resume-tailor.js";
 import { evaluateApplicationGate } from "./quality-gate.js";
 import { createInterviewPrep, duplicateKey } from "./application-tools.js";
 import { atsReadiness, checklistDefaults, mergeVerifiedEvidence, resumeDiff, validateRevisionInstruction } from "./resume-workflow.js";
@@ -390,6 +390,38 @@ async function route(request, env) {
     return json({ ok: true });
   }
 
+  if (method === "POST" && path === "/api/master-resume/parse") {
+    const body = await request.json();
+    if (!String(body.text || "").trim()) return json({ error: "Resume text is required" }, 400);
+    const budget = await aiBudgetStatus(env);
+    if (budget.remaining <= 0) return json({ error: "Today's AI budget is used up. Try again tomorrow, or edit the master resume fields manually." }, 429);
+    try {
+      const profile = await parseMasterResume(env, body.text);
+      await recordAiUsage(env, "provider", "resume_parse");
+      return json({ ok: true, profile });
+    } catch (error) {
+      await recordAiUsage(env, "provider", "resume_parse", true);
+      return json({ error: `Could not parse this resume: ${error.message}` }, 502);
+    }
+  }
+  if (method === "PUT" && path === "/api/master-resume") {
+    const body = await request.json();
+    if (!String(body.name || "").trim()) return json({ error: "A name is required" }, 400);
+    if (!String(body.title || "").trim()) return json({ error: "A title is required" }, 400);
+    const profile = {
+      name: body.name, title: body.title, email: body.email || "", phone: body.phone || "",
+      location: body.location || "", linkedin: body.linkedin || "", github: body.github || "", website: body.website || "",
+      summary: body.summary || "", skills: body.skills || "", skillsStructured: Array.isArray(body.skillsStructured) ? body.skillsStructured : [],
+      experience: Array.isArray(body.experience) ? body.experience : [], projects: Array.isArray(body.projects) ? body.projects : [],
+      education: Array.isArray(body.education) ? body.education : [], certifications: Array.isArray(body.certifications) ? body.certifications : [],
+      certificationDate: body.certificationDate || ""
+    };
+    await env.DB.prepare(`INSERT INTO master_resume_profiles (id, profile_json, source_name, verified_at, updated_at) VALUES (1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET profile_json=excluded.profile_json, source_name=excluded.source_name, verified_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP`)
+      .bind(JSON.stringify(profile), String(body.sourceName || "Uploaded resume").trim()).run();
+    await activity(env, "master_resume_updated", `Master resume profile updated from ${String(body.sourceName || "an uploaded resume").trim()}`);
+    return json({ ok: true });
+  }
   if (method === "POST" && path === "/api/evidence") {
     const body = await request.json();
     const types = ["experience", "project", "certification", "skill", "achievement"];

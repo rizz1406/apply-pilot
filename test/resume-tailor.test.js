@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLatex, contentHash, createTailoredPack, keywordCoverage } from "../worker/resume-tailor.js";
+import { buildLatex, contentHash, createTailoredPack, keywordCoverage, parseMasterResume } from "../worker/resume-tailor.js";
 
 const resume = {
   name: "Rizwan Baig", title: "Data Analyst", email: "test@example.com", phone: "123", location: "Hyderabad",
@@ -148,4 +148,35 @@ test("locks every verified master section when AI omits content", async () => {
   assert.match(pack.latex, /\\begin\{tabular\}/);
   assert.match(pack.latex, /\\itemsep -3pt/);
   assert.match(pack.latex, /Cert C/);
+});
+
+test("parses an uploaded resume into a structured master profile without inventing facts", async () => {
+  const parsed = {
+    name: "Rizwan Baig", title: "Data Analyst", email: "rizwan@example.com", phone: "+91 90000 00000",
+    location: "Hyderabad, India", linkedin: "https://linkedin.com/in/rizwan", github: "", website: "",
+    summary: "Data Analyst with SQL and BigQuery experience.", skills: "SQL, BigQuery, Power BI", skillsStructured: [],
+    experienceStructured: [{ role: "Data Analyst", company: "Acme", location: "Hyderabad", dates: "2024 - Present", bullets: ["Built dashboards in Power BI."] }],
+    projectsStructured: [{ name: "Sales Dashboard", tech: "SQL, Power BI", link: "", date: "2024", bullets: ["Built a sales dashboard."] }],
+    educationStructured: [{ degree: "B.Tech", school: "Example College", location: "Hyderabad", dates: "2020 - 2024" }],
+    certificationsStructured: [{ name: "Power BI Cert", link: "" }], certificationDate: ""
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(parsed) }] } }] }));
+  try {
+    const profile = await parseMasterResume({ GEMINI_API_KEY: "key", GEMINI_MODEL: "gemini-test" }, "Rizwan Baig, Data Analyst resume text...");
+    assert.equal(profile.name, "Rizwan Baig");
+    assert.equal(profile.experience.length, 1);
+    assert.equal(profile.experience[0].company, "Acme");
+    assert.equal(profile.projects.length, 1);
+    assert.equal(profile.education[0].degree, "B.Tech");
+    assert.equal(profile.certifications[0].name, "Power BI Cert");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("resume parsing rejects an invalid non-object response", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "[]" }] } }] }));
+  try {
+    await assert.rejects(() => parseMasterResume({ GEMINI_API_KEY: "key", GEMINI_MODEL: "gemini-test" }, "some resume text"));
+  } finally { globalThis.fetch = originalFetch; }
 });

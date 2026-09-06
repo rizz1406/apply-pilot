@@ -690,9 +690,9 @@ function renderSettings() {
     <section class="panel settings-section" style="grid-column:1/-1"><div class="section-heading"><div><h2>Upload your current resume</h2><p>One-stop: upload PDF and we search jobs around it + pre-fill evidence.</p></div></div>
       <div class="panel" id="resume-drop" style="border:2px dashed var(--line-strong); border-radius:14px; background: var(--surface-alt); padding:18px; text-align:center; transition: all .16s;">
         <input id="resume-file" type="file" accept=".pdf,.txt,.tex,.json" hidden>
-        <p style="margin:0; font-weight:700;">Drop your resume PDF here or <button class="text-button" data-action="pick-resume" style="font-weight:800;">choose file</button></p><p class="job-company" style="margin:6px 0 0;">PDF, TXT, LaTeX or JSON • stays in your D1 • used to set skills & search</p>
+        <p style="margin:0; font-weight:700;">Drop your resume PDF here or <button class="text-button" data-action="pick-resume" style="font-weight:800;">choose file</button></p><p class="job-company" style="margin:6px 0 0;">PDF, TXT, LaTeX or JSON — parsed with AI into your master resume profile. Nothing is saved until you review and confirm.</p>
         <div id="resume-parse-status" class="job-company" style="margin-top:10px;"></div>
-        <div id="resume-preview" style="margin-top:12px; text-align:left; display:none;"><textarea id="resume-text-preview" rows="6" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:10px; font-family: monospace; font-size:11px;"></textarea><div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;"><button class="primary-button" data-action="confirm-resume-parse">Use this to set my search & evidence</button><button class="text-button" data-action="clear-resume-parse">Clear</button><label class="check-row" style="margin:0;"><input id="keep-latex" type="checkbox" checked> Keep LaTeX too (advanced)</label></div></div>
+        <div id="resume-preview" style="margin-top:12px; text-align:left; display:none;"><textarea id="resume-text-preview" rows="6" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:10px; font-family: monospace; font-size:11px;"></textarea><div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;"><button class="primary-button" data-action="parse-resume-preview">Parse into master resume</button><button class="text-button" data-action="clear-resume-parse">Clear</button><label class="check-row" style="margin:0;"><input id="keep-latex" type="checkbox" checked> Keep LaTeX too (advanced)</label></div><div id="resume-structured-preview" style="display:none;"></div></div>
       </div>
     </section>
     <section class="panel settings-section" style="grid-column:1/-1"><div class="section-heading"><div><h2>Verified resume evidence</h2><p>Only confirmed evidence can be added to AI-generated resumes.</p></div></div>
@@ -777,8 +777,10 @@ async function handleAction(event) {
   if (action === "add-source") await addSource();
   if (action === "add-preset") await addPreset(event.currentTarget.dataset.preset);
   if (action === "pick-resume") document.getElementById("resume-file")?.click();
-  if (action === "confirm-resume-parse") await confirmResumeParse();
-  if (action === "clear-resume-parse") { const el=document.getElementById("resume-preview"); if(el) el.style.display="none"; document.getElementById("resume-parse-status").textContent=""; }
+  if (action === "parse-resume-preview") await parseResumeIntoMasterPreview();
+  if (action === "save-master-resume") await saveMasterResumeProfile();
+  if (action === "discard-master-resume-preview") { pendingMasterProfile = null; const box = document.getElementById("resume-structured-preview"); if (box) { box.style.display = "none"; box.innerHTML = ""; } document.getElementById("resume-parse-status").textContent = ""; }
+  if (action === "clear-resume-parse") { pendingMasterProfile = null; const el=document.getElementById("resume-preview"); if(el) el.style.display="none"; const box = document.getElementById("resume-structured-preview"); if (box) { box.style.display = "none"; box.innerHTML = ""; } document.getElementById("resume-parse-status").textContent=""; }
   if (action === "add-bulk-career") await addBulkCareer();
   if (action === "preview-bulk-career") previewBulkCareer();
   if (action === "download-pack-pdf") await downloadPackPdf(id);
@@ -1437,34 +1439,70 @@ async function handleResumeFile(file) {
   }
 }
 
-async function confirmResumeParse() {
+let pendingMasterProfile = null;
+
+async function parseResumeIntoMasterPreview() {
   const text = document.getElementById("resume-text-preview")?.value || "";
-  if (!text.trim()) return toast("Paste resume text first.");
-  const keepLatex = document.getElementById("keep-latex")?.checked;
-  // Extract skills around uploaded resume and set search
-  const foundSkills = RESUME_SKILLS.filter(s => text.toLowerCase().includes(s));
-  const suggestedSkills = foundSkills.length ? foundSkills.join(",") : String(text.match(/[A-Za-z0-9+#.]{3,}/g)||[]).slice(0,20).join(",");
-  state.settings.requiredSkills = foundSkills.join(",") || state.settings.requiredSkills;
-  // Try to guess titles: look for "Data Analyst" etc.
-  const titleGuess = (text.match(/Data Analyst|BI Analyst|Analytics Engineer|Business Intelligence|Data Engineer|Scientist/gi)||[]).slice(0,3).join(",");
-  if (titleGuess) state.settings.alternateTitles = titleGuess;
-  saveState();
-  // Push to cloud as evidence + profile if remote
-  if (remoteEnabled) {
-    try {
-      // Save as verified evidence (one bulk)
-      await api("/evidence", { method: "POST", body: JSON.stringify({ evidenceType: "project", title: "Uploaded Master Resume", details: { name: "Master Resume", tech: foundSkills.slice(0,5).join(", "), bullets: [text.slice(0,500).replace(/\n/g," ").slice(0,400)] }, sourceUrl: "uploaded-resume", confirmed: true }) });
-      await api("/profile", { method: "PUT", body: JSON.stringify({ summary: text.slice(0,600), verified_skills: foundSkills }) });
-      await connectBackend();
-    } catch (e) { /* local only is fine */ }
+  if (!text.trim()) return toast("Paste or upload resume text first.");
+  if (!remoteEnabled) return toast("Connect your cloud first — parsing your resume needs the AI backend.");
+  const status = document.getElementById("resume-parse-status");
+  const box = document.getElementById("resume-structured-preview");
+  status.textContent = "Parsing with AI — this can take up to 30 seconds...";
+  box.style.display = "none";
+  try {
+    const { profile } = await api("/master-resume/parse", { method: "POST", body: JSON.stringify({ text }) });
+    pendingMasterProfile = profile;
+    box.style.display = "block";
+    box.innerHTML = renderMasterProfilePreview(profile);
+    status.textContent = "Review the extracted resume below — nothing is saved yet.";
+  } catch (error) {
+    status.textContent = `Could not parse this resume: ${error.message}`;
   }
-  // Toggle LaTeX visibility
-  document.documentElement.setAttribute("data-keep-latex", keepLatex ? "1" : "0");
-  try { localStorage.setItem("applypilot-keep-latex", keepLatex ? "1" : "0"); } catch {}
-  toast(`Resume set as master. Search now around: ${foundSkills.slice(0,5).join(", ")||"your profile"}. ${keepLatex ? "LaTeX kept under Advanced." : "LaTeX hidden."}`);
-  state.activeView = "today";
-  render();
-  if (remoteEnabled) { try { await api("/scan", { method: "POST" }); await connectBackend(); } catch {} }
+}
+
+function renderMasterProfilePreview(profile) {
+  const bulletList = bullets => (bullets || []).map(b => `<li>${escapeHtml(b)}</li>`).join("");
+  const experience = (profile.experience || []).map(role => `<div style="margin-bottom:10px;"><strong>${escapeHtml(role.role)}</strong> — ${escapeHtml(role.company)} <small class="job-company">${escapeHtml(role.dates)}</small><ul style="margin:4px 0 0 18px; font-size:12px;">${bulletList(role.bullets)}</ul></div>`).join("") || `<p class="job-company">No experience entries found — check the extracted text preview above.</p>`;
+  const projects = (profile.projects || []).map(project => `<div style="margin-bottom:8px;"><strong>${escapeHtml(project.name)}</strong> <small class="job-company">${escapeHtml(project.tech)}</small><ul style="margin:4px 0 0 18px; font-size:12px;">${bulletList(project.bullets)}</ul></div>`).join("");
+  const education = (profile.education || []).map(entry => `<div>${escapeHtml(entry.degree)}, ${escapeHtml(entry.school)} <small class="job-company">${escapeHtml(entry.dates)}</small></div>`).join("");
+  const certifications = (profile.certifications || []).map(cert => escapeHtml(cert.name)).filter(Boolean).join(", ");
+  return `<div class="panel" style="padding:14px; margin-top:10px;">
+    <p style="margin:0 0 4px; font-weight:750;">${escapeHtml(profile.name || "Name not found")} — ${escapeHtml(profile.title || "Title not found")}</p>
+    <p class="job-company" style="margin:0 0 10px;">${escapeHtml([profile.email, profile.phone, profile.location].filter(Boolean).join(" · ")) || "No contact details found"}</p>
+    <p style="font-size:12.5px;">${escapeHtml(profile.summary) || "<em>No summary found.</em>"}</p>
+    <p style="font-size:12px;"><strong>Skills:</strong> ${escapeHtml(profile.skills) || "None extracted"}</p>
+    <h4 style="margin:14px 0 6px; font-size:13px;">Experience</h4>${experience}
+    ${projects ? `<h4 style="margin:14px 0 6px; font-size:13px;">Projects</h4>${projects}` : ""}
+    ${education ? `<h4 style="margin:14px 0 6px; font-size:13px;">Education</h4>${education}` : ""}
+    ${certifications ? `<p style="margin:10px 0 0; font-size:12px;"><strong>Certifications:</strong> ${certifications}</p>` : ""}
+    <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;">
+      <button class="primary-button" data-action="save-master-resume">Save as my master resume</button>
+      <button class="text-button" data-action="discard-master-resume-preview">Discard</button>
+    </div>
+  </div>`;
+}
+
+async function saveMasterResumeProfile() {
+  const profile = pendingMasterProfile;
+  if (!profile) return toast("Nothing to save — parse a resume first.");
+  const keepLatex = document.getElementById("keep-latex")?.checked;
+  try {
+    await api("/master-resume", { method: "PUT", body: JSON.stringify({ ...profile, sourceName: "Uploaded resume" }) });
+    const foundSkills = RESUME_SKILLS.filter(s => (profile.skills || "").toLowerCase().includes(s));
+    if (foundSkills.length) state.settings.requiredSkills = foundSkills.join(",");
+    if (profile.title) state.settings.alternateTitles = profile.title;
+    saveState();
+    document.documentElement.setAttribute("data-keep-latex", keepLatex ? "1" : "0");
+    try { localStorage.setItem("applypilot-keep-latex", keepLatex ? "1" : "0"); } catch {}
+    await connectBackend();
+    pendingMasterProfile = null;
+    document.getElementById("resume-preview").style.display = "none";
+    document.getElementById("resume-parse-status").textContent = "";
+    toast("Master resume updated — every new tailored pack will use this from now on.");
+    state.activeView = "today";
+    render();
+    try { await api("/scan", { method: "POST" }); await connectBackend(); } catch {}
+  } catch (error) { toast(error.message, { title: "Save failed", tone: "error" }); }
 }
 
 async function openLead(id, url) {
