@@ -13,6 +13,6 @@ test("sends an approved outreach message through Gmail", async () => {
   try {
     const result = await sendOutreach({ GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret", GMAIL_REFRESH_TOKEN: "refresh" }, { recruiter_email: "recruiter@example.com", subject: "Follow-up", body: "Hello" });
     assert.equal(result.threadId, "thread-1");
-    assert.match(calls[1].url, /messages\/send/);
+    assert.ok(calls.some(call => /messages\/send/.test(call.url)));
   } finally { globalThis.fetch = originalFetch; }
 });

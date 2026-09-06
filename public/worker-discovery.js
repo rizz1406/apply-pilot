@@ -199,6 +199,125 @@ export async function fetchSourceWithRetry(source, attempts = 3, fetcher = fetch
   throw failure;
 }
 
+// Scans exactly one source and applies every side effect (jobs table, source_scan_runs,
+// last_scanned_at/last_error). Shared by the bulk scanSources() loop (manual "Run job scan",
+// bounded by a time budget) and scanSourceById() (one Cloudflare Queue message per source,
+// each with its own execution slot, immune to one big board starving the rest).
+export async function scanOneSource(env, source, settings, preferenceWeights) {
+  const startedAt = Date.now();
+  const result = { considered: 0, discovered: 0, alreadyTracked: 0, expired: 0, retryAttempts: 0, skipped: { stale: 0, location: 0, experience: 0, salary: 0, excluded: 0, lowFit: 0 }, matches: [], error: null };
+  try {
+    const fetched = await fetchSourceWithRetry(source);
+    result.retryAttempts = fetched.attempts - 1;
+    const jobs = fetched.jobs;
+    const currentIds = new Set(jobs.map(job => `${job.provider}:${job.externalId}`));
+    let sourceMatches = 0;
+    for (const job of jobs) {
+      result.considered += 1;
+      if (job.publishedAt && settings.freshness_hours) {
+        const age = Date.now() - new Date(job.publishedAt).getTime();
+        if (Number.isFinite(age) && age > Number(settings.freshness_hours) * 3600000) {
+          result.skipped.stale += 1;
+          continue;
+        }
+      }
+      const internship = isEarlyCareerJob(job);
+      const freelance = isFreelanceJob(job);
+      const effectiveSettings = freelance ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.freelance_titles || ""}`, minimum_salary: null } : internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
+      const match = scoreJob(job, effectiveSettings);
+      if (settings.feedback_learning_enabled) {
+        const learned = feedbackAdjustment(job, preferenceWeights);
+        match.score = Math.max(0, Math.min(100, match.score + learned.adjustment));
+        match.eligible = match.score >= Number(effectiveSettings.minimum_match_score || 55);
+        if (learned.adjustment) match.reasons.push(`Learned preference ${learned.adjustment > 0 ? "+" : ""}${learned.adjustment}`);
+      }
+      const id = `${job.provider}:${job.externalId}`;
+      // Internship/Freelance hunting is intentionally broader: retain lower-fit roles in the
+      // configured location so the user can prioritize pay and transferable skills.
+      const broadEligible = (internship || freelance) && !match.reasons.includes("Location conflicts with the no-relocation preference");
+      if (!match.eligible && !broadEligible) {
+        await env.DB.prepare("UPDATE jobs SET status = 'skipped' WHERE id = ? AND status IN ('new','shortlisted')").bind(id).run();
+        const reason = match.reasons[0] || "";
+        if (reason.includes("Location conflicts")) result.skipped.location += 1;
+        else if (reason.includes("Requires at least")) result.skipped.experience += 1;
+        else if (reason.includes("salary is below")) result.skipped.salary += 1;
+        else if (reason.includes("excluded keyword")) result.skipped.excluded += 1;
+        else result.skipped.lowFit += 1;
+        continue;
+      }
+      const opportunityType = freelance ? "freelance" : internship ? "internship" : "full_time";
+      const dupKey = duplicateKey(job);
+      const existingDup = await env.DB.prepare("SELECT id, score, provider FROM jobs WHERE duplicate_key = ? AND status IN ('new','shortlisted','approved') LIMIT 1").bind(dupKey).first();
+      if (existingDup && existingDup.id !== id) {
+        if (Number(existingDup.score || 0) >= match.score) {
+          result.alreadyTracked += 1;
+          continue;
+        } else {
+          await env.DB.prepare("UPDATE jobs SET status='expired' WHERE id=?").bind(existingDup.id).run();
+          result.expired += 1;
+        }
+      }
+      const inserted = await env.DB.prepare(`INSERT OR IGNORE INTO jobs
+        (id, external_id, source_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, published_at, score, score_reasons, risk_flags, duplicate_key, opportunity_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(id, job.externalId, source.source_table === "sources" ? source.id : null, job.provider, job.company, job.title, job.location, job.workplaceType, job.description.slice(0, 30000), job.applyUrl, job.salaryText, job.publishedAt, match.score, JSON.stringify(match.reasons), JSON.stringify(jobRiskFlags(job)), dupKey, opportunityType).run();
+      result.discovered += inserted.meta.changes || 0;
+      if (inserted.meta.changes) {
+        sourceMatches += 1;
+        result.matches.push({ id, title: job.title, company: job.company, location: job.location, score: match.score, applyUrl: job.applyUrl });
+      } else result.alreadyTracked += 1;
+    }
+    const trackedQuery = source.source_table === "sources"
+      ? env.DB.prepare("SELECT id, published_at FROM jobs WHERE source_id = ? AND status IN ('new','shortlisted')").bind(source.id)
+      : env.DB.prepare("SELECT id, published_at FROM jobs WHERE provider = ? AND company = ? AND status IN ('new','shortlisted')").bind(source.provider, source.label);
+    const { results: tracked } = await trackedQuery.all();
+    for (const trackedJob of tracked) {
+      const publishedAt = trackedJob.published_at ? new Date(trackedJob.published_at).getTime() : NaN;
+      const beyondFreshness = Number.isFinite(publishedAt) && settings.freshness_hours && Date.now() - publishedAt > Number(settings.freshness_hours) * 3600000;
+      if (currentIds.has(trackedJob.id) && !beyondFreshness) continue;
+      const expiredResult = await env.DB.prepare("UPDATE jobs SET status = 'expired' WHERE id = ? AND status IN ('new','shortlisted')").bind(trackedJob.id).run();
+      result.expired += expiredResult.meta.changes || 0;
+    }
+    await env.DB.prepare(`UPDATE ${source.source_table} SET last_scanned_at = CURRENT_TIMESTAMP, last_error = NULL WHERE id = ?`).bind(source.id).run();
+    await env.DB.prepare(`INSERT INTO source_scan_runs (id, source_key, provider, label, status, attempts, jobs_seen, new_matches, duration_ms)
+      VALUES (?, ?, ?, ?, 'success', ?, ?, ?, ?)`)
+      .bind(crypto.randomUUID(), `${source.source_table}:${source.id}`, source.provider, source.label, fetched.attempts, jobs.length, sourceMatches, Date.now() - startedAt).run();
+  } catch (error) {
+    result.retryAttempts = Math.max(0, (error.attempts || 3) - 1);
+    result.error = `${source.label}: ${error.message}`;
+    await env.DB.prepare(`UPDATE ${source.source_table} SET last_error = ? WHERE id = ?`).bind(error.message, source.id).run();
+    await env.DB.prepare(`INSERT INTO source_scan_runs (id, source_key, provider, label, status, attempts, duration_ms, error)
+      VALUES (?, ?, ?, ?, 'failed', ?, ?, ?)`)
+      .bind(crypto.randomUUID(), `${source.source_table}:${source.id}`, source.provider, source.label, error.attempts || 3, Date.now() - startedAt, error.message).run();
+  }
+  return result;
+}
+
+async function candidateYears(env, settings) {
+  const profile = await env.DB.prepare("SELECT current_role_start, experience_at_search FROM candidate_profile WHERE id = 1").first();
+  if (profile?.current_role_start) {
+    const started = new Date(`${profile.current_role_start}-01T00:00:00Z`);
+    return Math.max(0, (Date.now() - started.getTime()) / 31557600000);
+  }
+  return profile?.experience_at_search || null;
+}
+
+// One queue message per source: called from the Cloudflare Queue consumer so each source
+// gets its own bounded invocation instead of competing for one shared time budget.
+export async function scanSourceById(env, sourceTable, sourceId) {
+  const settings = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
+  if (settings.search_paused) return { skipped: true, reason: "paused" };
+  if (settings.active_from && Date.now() < new Date(`${settings.active_from}T00:00:00Z`).getTime()) return { skipped: true, reason: "not_active_yet" };
+  const table = ["sources", "external_sources", "ats_sources"].includes(sourceTable) ? sourceTable : "sources";
+  const source = await env.DB.prepare(`SELECT id, provider, organization, label, enabled FROM ${table} WHERE id = ? AND enabled = 1`).bind(sourceId).first();
+  if (!source) return { skipped: true, reason: "not_found_or_disabled" };
+  source.source_table = table;
+  settings.candidate_years = await candidateYears(env, settings);
+  const preferenceRows = await env.DB.prepare("SELECT feature_key, weight FROM preference_weights").all();
+  const preferenceWeights = Object.fromEntries(preferenceRows.results.map(row => [row.feature_key, row.weight]));
+  return scanOneSource(env, source, settings, preferenceWeights);
+}
+
 export async function scanSources(env) {
   const settings = await env.DB.prepare("SELECT * FROM settings WHERE id = 1").first();
   if (settings.search_paused) {
@@ -214,13 +333,7 @@ export async function scanSources(env) {
   }
   const taskId = crypto.randomUUID();
   await env.DB.prepare("INSERT INTO task_runs (id, task_type, status, max_retries) VALUES (?, 'job_scan', 'running', 2)").bind(taskId).run();
-  const profile = await env.DB.prepare("SELECT current_role_start, experience_at_search FROM candidate_profile WHERE id = 1").first();
-  if (profile?.current_role_start) {
-    const started = new Date(`${profile.current_role_start}-01T00:00:00Z`);
-    settings.candidate_years = Math.max(0, (Date.now() - started.getTime()) / 31557600000);
-  } else {
-    settings.candidate_years = profile?.experience_at_search || null;
-  }
+  settings.candidate_years = await candidateYears(env, settings);
   const [standard, external, ats, preferenceRows] = await Promise.all([
     env.DB.prepare("SELECT id, provider, organization, label, enabled, last_scanned_at, last_error, 'sources' AS source_table FROM sources WHERE enabled = 1").all(),
     env.DB.prepare("SELECT id, provider, organization, label, enabled, last_scanned_at, last_error, 'external_sources' AS source_table FROM external_sources WHERE enabled = 1").all(),
@@ -248,92 +361,15 @@ export async function scanSources(env) {
   for (const source of sources) {
     if (Date.now() > scanDeadline) { timedOut = true; break; }
     processedCount += 1;
-    const startedAt = Date.now();
-    let sourceMatches = 0;
-    try {
-      const fetched = await fetchSourceWithRetry(source);
-      retryCount += fetched.attempts - 1;
-      const jobs = fetched.jobs;
-      const currentIds = new Set(jobs.map(job => `${job.provider}:${job.externalId}`));
-      for (const job of jobs) {
-        considered += 1;
-        if (job.publishedAt && settings.freshness_hours) {
-          const age = Date.now() - new Date(job.publishedAt).getTime();
-          if (Number.isFinite(age) && age > Number(settings.freshness_hours) * 3600000) {
-            skipped.stale += 1;
-            continue;
-          }
-        }
-        const internship = isEarlyCareerJob(job);
-        const freelance = isFreelanceJob(job);
-        const effectiveSettings = freelance ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.freelance_titles || ""}`, minimum_salary: null } : internship ? { ...settings, alternate_titles: `${settings.alternate_titles || ""},${settings.internship_titles || ""}`, minimum_salary: null } : settings;
-        const match = scoreJob(job, effectiveSettings);
-        if (settings.feedback_learning_enabled) {
-          const learned = feedbackAdjustment(job, preferenceWeights);
-          match.score = Math.max(0, Math.min(100, match.score + learned.adjustment));
-          match.eligible = match.score >= Number(effectiveSettings.minimum_match_score || 55);
-          if (learned.adjustment) match.reasons.push(`Learned preference ${learned.adjustment > 0 ? "+" : ""}${learned.adjustment}`);
-        }
-        const id = `${job.provider}:${job.externalId}`;
-        // Internship/Freelance hunting is intentionally broader: retain lower-fit roles in the
-        // configured location so the user can prioritize pay and transferable skills.
-        const broadEligible = (internship || freelance) && !match.reasons.includes("Location conflicts with the no-relocation preference");
-        if (!match.eligible && !broadEligible) {
-          await env.DB.prepare("UPDATE jobs SET status = 'skipped' WHERE id = ? AND status IN ('new','shortlisted')").bind(id).run();
-          const reason = match.reasons[0] || "";
-          if (reason.includes("Location conflicts")) skipped.location += 1;
-          else if (reason.includes("Requires at least")) skipped.experience += 1;
-          else if (reason.includes("salary is below")) skipped.salary += 1;
-          else if (reason.includes("excluded keyword")) skipped.excluded += 1;
-          else skipped.lowFit += 1;
-          continue;
-        }
-        const opportunityType = freelance ? "freelance" : internship ? "internship" : "full_time";
-        const dupKey = duplicateKey(job);
-        const existingDup = await env.DB.prepare("SELECT id, score, provider FROM jobs WHERE duplicate_key = ? AND status IN ('new','shortlisted','approved') LIMIT 1").bind(dupKey).first();
-        if (existingDup && existingDup.id !== id) {
-          if (Number(existingDup.score || 0) >= match.score) {
-            skipped.lowFit += 0;
-            alreadyTracked += 1;
-            continue;
-          } else {
-            await env.DB.prepare("UPDATE jobs SET status='expired' WHERE id=?").bind(existingDup.id).run();
-            expired += 1;
-          }
-        }
-        const result = await env.DB.prepare(`INSERT OR IGNORE INTO jobs
-          (id, external_id, source_id, provider, company, title, location, workplace_type, description, apply_url, salary_text, published_at, score, score_reasons, risk_flags, duplicate_key, opportunity_type)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .bind(id, job.externalId, source.source_table === "sources" ? source.id : null, job.provider, job.company, job.title, job.location, job.workplaceType, job.description.slice(0, 30000), job.applyUrl, job.salaryText, job.publishedAt, match.score, JSON.stringify(match.reasons), JSON.stringify(jobRiskFlags(job)), dupKey, opportunityType).run();
-        discovered += result.meta.changes || 0;
-        if (result.meta.changes) {
-          sourceMatches += 1;
-          matches.push({ id, title: job.title, company: job.company, location: job.location, score: match.score, applyUrl: job.applyUrl });
-        } else alreadyTracked += 1;
-      }
-      const trackedQuery = source.source_table === "sources"
-        ? env.DB.prepare("SELECT id, published_at FROM jobs WHERE source_id = ? AND status IN ('new','shortlisted')").bind(source.id)
-        : env.DB.prepare("SELECT id, published_at FROM jobs WHERE provider = ? AND company = ? AND status IN ('new','shortlisted')").bind(source.provider, source.label);
-      const { results: tracked } = await trackedQuery.all();
-      for (const trackedJob of tracked) {
-        const publishedAt = trackedJob.published_at ? new Date(trackedJob.published_at).getTime() : NaN;
-        const beyondFreshness = Number.isFinite(publishedAt) && settings.freshness_hours && Date.now() - publishedAt > Number(settings.freshness_hours) * 3600000;
-        if (currentIds.has(trackedJob.id) && !beyondFreshness) continue;
-        const result = await env.DB.prepare("UPDATE jobs SET status = 'expired' WHERE id = ? AND status IN ('new','shortlisted')").bind(trackedJob.id).run();
-        expired += result.meta.changes || 0;
-      }
-      await env.DB.prepare(`UPDATE ${source.source_table} SET last_scanned_at = CURRENT_TIMESTAMP, last_error = NULL WHERE id = ?`).bind(source.id).run();
-      await env.DB.prepare(`INSERT INTO source_scan_runs (id, source_key, provider, label, status, attempts, jobs_seen, new_matches, duration_ms)
-        VALUES (?, ?, ?, ?, 'success', ?, ?, ?, ?)`)
-        .bind(crypto.randomUUID(), `${source.source_table}:${source.id}`, source.provider, source.label, fetched.attempts, jobs.length, sourceMatches, Date.now() - startedAt).run();
-    } catch (error) {
-      retryCount += Math.max(0, (error.attempts || 3) - 1);
-      errors.push(`${source.label}: ${error.message}`);
-      await env.DB.prepare(`UPDATE ${source.source_table} SET last_error = ? WHERE id = ?`).bind(error.message, source.id).run();
-      await env.DB.prepare(`INSERT INTO source_scan_runs (id, source_key, provider, label, status, attempts, duration_ms, error)
-        VALUES (?, ?, ?, ?, 'failed', ?, ?, ?)`)
-        .bind(crypto.randomUUID(), `${source.source_table}:${source.id}`, source.provider, source.label, error.attempts || 3, Date.now() - startedAt, error.message).run();
-    }
+    const one = await scanOneSource(env, source, settings, preferenceWeights);
+    considered += one.considered;
+    discovered += one.discovered;
+    alreadyTracked += one.alreadyTracked;
+    expired += one.expired;
+    retryCount += one.retryAttempts;
+    for (const key of Object.keys(skipped)) skipped[key] += one.skipped[key];
+    matches.push(...one.matches);
+    if (one.error) errors.push(one.error);
   }
 
   // Saved roles are intentionally temporary: keep them for thirty days, then clear them.

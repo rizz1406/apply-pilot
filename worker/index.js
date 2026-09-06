@@ -1,4 +1,4 @@
-import { scanSources } from "./discovery.js";
+import { scanSources, scanSourceById } from "./discovery.js";
 import { prepareApplication } from "./ai.js";
 import { sendNotificationEmail, sendOutreach, syncApplicationConfirmations, syncJobAlertEmails, syncRecruiterReplies } from "./gmail.js";
 import { scoreJob } from "./matching.js";
@@ -737,11 +737,54 @@ async function processScanTask(env) {
   return { ...scan, portalLeads: alerts.discovered, automation };
 }
 
+// One queue message per source (see scanSourceById): every enabled source gets its own
+// bounded invocation every 5 minutes instead of competing for one shared time budget, so a
+// handful of slow boards can no longer starve every source scanned after them.
+async function processSourceScanTask(env, payload) {
+  const scan = await scanSourceById(env, payload.sourceTable, payload.sourceId);
+  if (scan.skipped) return scan;
+  if (scan.matches?.length) {
+    const decisions = await persistAutomationDecisions(env, scan.matches);
+    if (scan.discovered) {
+      await notify(env, `ApplyPilot found ${scan.discovered} new matching ${scan.discovered === 1 ? "job" : "jobs"} from ${payload.label || "a source"}.`);
+      if (env.GMAIL_REFRESH_TOKEN) {
+        const profile = await env.DB.prepare("SELECT email FROM candidate_profile WHERE id = 1").first();
+        const lines = scan.matches.map(match => `${match.score}% - ${match.title} at ${match.company}\n${match.location || "Location not listed"}\n${match.applyUrl}`).join("\n\n");
+        await sendNotificationEmail(env, profile?.email, `ApplyPilot: ${scan.discovered} new high-fit ${scan.discovered === 1 ? "job" : "jobs"}`, `New roles passed your eligibility rules:\n\n${lines}\n\nReview now: https://applypilot.pages.dev`);
+      }
+    }
+    return { ...scan, automation: decisions.reduce((counts, item) => ({ ...counts, [item.policy.action]: (counts[item.policy.action] || 0) + 1 }), {}) };
+  }
+  return scan;
+}
+
+async function processGmailSyncTask(env) {
+  if (!env.GMAIL_REFRESH_TOKEN) return { skipped: true, reason: "gmail_not_configured" };
+  const alerts = await syncJobAlertEmails(env);
+  const replies = await syncRecruiterReplies(env);
+  if (replies.replies) await notify(env, `ApplyPilot detected ${replies.replies} recruiter ${replies.replies === 1 ? "reply" : "replies"}. Follow-ups were stopped.`);
+  const confirmations = await syncApplicationConfirmations(env);
+  return { alerts, replies, confirmations };
+}
+
 async function scheduled(env, controller) {
   if (controller.cron === "*/5 * * * *") {
+    const settings = await env.DB.prepare("SELECT search_paused FROM settings WHERE id = 1").first();
+    if (settings?.search_paused) return { paused: true };
+    const bucket = Math.floor(Date.now() / 300000);
     if (env.TASK_QUEUE) {
-      const bucket = Math.floor(Date.now() / 300000);
-      return enqueueTask(env, "job_scan", {}, `scheduled_scan:${bucket}`);
+      const [standard, external, ats] = await Promise.all([
+        env.DB.prepare("SELECT id, label FROM sources WHERE enabled = 1").all(),
+        env.DB.prepare("SELECT id, label FROM external_sources WHERE enabled = 1").all(),
+        env.DB.prepare("SELECT id, label FROM ats_sources WHERE enabled = 1").all()
+      ]);
+      const enqueued = await Promise.all([
+        ...standard.results.map(row => enqueueTask(env, "source_scan", { sourceTable: "sources", sourceId: row.id, label: row.label }, `source_scan:sources:${row.id}:${bucket}`)),
+        ...external.results.map(row => enqueueTask(env, "source_scan", { sourceTable: "external_sources", sourceId: row.id, label: row.label }, `source_scan:external_sources:${row.id}:${bucket}`)),
+        ...ats.results.map(row => enqueueTask(env, "source_scan", { sourceTable: "ats_sources", sourceId: row.id, label: row.label }, `source_scan:ats_sources:${row.id}:${bucket}`)),
+        enqueueTask(env, "gmail_sync", {}, `gmail_sync:${bucket}`)
+      ]);
+      return { queued: enqueued.length };
     }
     return processScanTask(env);
   }
@@ -789,9 +832,14 @@ export default {
     ctx.waitUntil(scheduled(env, controller));
   },
   async queue(batch, env) {
+    const handlers = {
+      job_scan: () => processScanTask(env),
+      source_scan: payload => processSourceScanTask(env, payload),
+      gmail_sync: () => processGmailSyncTask(env)
+    };
     for (const message of batch.messages) {
       try {
-        await runQueuedTask(env, message.body, { job_scan: () => processScanTask(env) });
+        await runQueuedTask(env, message.body, handlers);
         message.ack();
       } catch {
         message.retry({ delaySeconds: 60 });

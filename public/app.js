@@ -64,6 +64,8 @@ const SOURCE_PRESETS = [
   { provider: "lever", organization: "meesho", label: "Meesho (Bangalore)" },
   { provider: "greenhouse", organization: "groww", label: "Groww (Mumbai)" },
   { provider: "greenhouse", organization: "postman", label: "Postman (Bangalore)" },
+  { provider: "greenhouse", organization: "druva", label: "Druva (Pune)" },
+  { provider: "greenhouse", organization: "netskope", label: "Netskope (India)" },
   { provider: "ashby", organization: "sarvam", label: "Sarvam" },
   { provider: "ashby", organization: "atlan", label: "Atlan" },
   { provider: "ashby", organization: "certifyos", label: "CertifyOS" },
