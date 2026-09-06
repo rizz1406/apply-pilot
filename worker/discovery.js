@@ -227,7 +227,11 @@ export async function scanSources(env) {
     env.DB.prepare("SELECT id, provider, organization, label, enabled, last_scanned_at, last_error, 'ats_sources' AS source_table FROM ats_sources WHERE enabled = 1").all(),
     env.DB.prepare("SELECT feature_key, weight FROM preference_weights").all()
   ]);
-  const sources = [...standard.results, ...external.results, ...ats.results];
+  // Never-scanned sources (and longest-idle ones) go first. A single invocation has a
+  // bounded time budget below, so a fixed id-ascending order would let a handful of slow
+  // boards (some take 60s+ alone) permanently starve every source added after them.
+  const sources = [...standard.results, ...external.results, ...ats.results]
+    .sort((a, b) => new Date(a.last_scanned_at || 0).getTime() - new Date(b.last_scanned_at || 0).getTime());
   const preferenceWeights = Object.fromEntries(preferenceRows.results.map(row => [row.feature_key, row.weight]));
   let discovered = 0;
   let expired = 0;
@@ -237,8 +241,13 @@ export async function scanSources(env) {
   const skipped = { stale: 0, location: 0, experience: 0, salary: 0, excluded: 0, lowFit: 0 };
   const errors = [];
   const matches = [];
+  const scanDeadline = Date.now() + 20000;
+  let timedOut = false;
+  let processedCount = 0;
 
   for (const source of sources) {
+    if (Date.now() > scanDeadline) { timedOut = true; break; }
+    processedCount += 1;
     const startedAt = Date.now();
     let sourceMatches = 0;
     try {
@@ -331,16 +340,16 @@ export async function scanSources(env) {
   await env.DB.prepare("UPDATE jobs SET status = 'expired' WHERE status = 'shortlisted' AND discovered_at < datetime('now', '-30 days')").run();
 
   await env.DB.prepare("INSERT INTO activity_log (event_type, message, metadata) VALUES ('scan', ?, ?)")
-    .bind(`Job scan completed: ${discovered} new matches, ${alreadyTracked} already tracked, ${expired} expired`, JSON.stringify({ discovered, alreadyTracked, expired, considered, skipped, errors })).run();
+    .bind(`Job scan completed: ${discovered} new matches, ${alreadyTracked} already tracked, ${expired} expired${timedOut ? ` (stopped early: ${processedCount}/${sources.length} sources fit in this run)` : ""}`, JSON.stringify({ discovered, alreadyTracked, expired, considered, skipped, errors, timedOut, processed: processedCount, totalEnabled: sources.length })).run();
   await env.DB.prepare("UPDATE task_runs SET status=?, retry_count=?, last_error=?, metadata=?, completed_at=CURRENT_TIMESTAMP WHERE id=?")
-    .bind(errors.length === sources.length && sources.length ? "failed" : "succeeded", retryCount, errors.join("\n") || null, JSON.stringify({ discovered, considered, scanned: sources.length }), taskId).run();
+    .bind(errors.length === processedCount && processedCount ? "failed" : "succeeded", retryCount, errors.join("\n") || null, JSON.stringify({ discovered, considered, scanned: processedCount, totalEnabled: sources.length, timedOut }), taskId).run();
   if (discovered || errors.length) {
     const title = errors.length ? "Job scan completed with source issues" : `${discovered} new match${discovered === 1 ? "" : "es"} found`;
     const message = errors.length ? `${discovered} matches found. ${errors.length} source${errors.length === 1 ? "" : "s"} failed after retries.` : "Fresh official postings are ready for review.";
     await env.DB.prepare("INSERT INTO app_notifications (id, type, title, message) VALUES (?, ?, ?, ?)")
       .bind(crypto.randomUUID(), errors.length ? "warning" : "match", title, message).run();
   }
-  return { discovered, alreadyTracked, expired, considered, skipped, scanned: sources.length, errors, matches };
+  return { discovered, alreadyTracked, expired, considered, skipped, scanned: processedCount, totalEnabled: sources.length, timedOut, errors, matches };
 }
 
 function isEarlyCareerJob(job) {
