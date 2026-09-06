@@ -136,7 +136,10 @@ dialog.addEventListener("close", () => { dialog.className = ""; });
 async function api(path, options = {}) {
   const token = getApiToken();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  // AI-backed calls (tailoring, resume parsing, regeneration) routinely take 20-40s in
+  // practice. 15s was aborting the client side while the server call kept running to
+  // completion, showing a false "failed" even though it had actually succeeded.
+  const timeout = setTimeout(() => controller.abort(), 60000);
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       ...options,
